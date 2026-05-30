@@ -92,30 +92,42 @@
 - `markitdown-cli ocr-check` — проверка доступности Tesseract и tessdata
 - Цветной вывод, флаг `--optimize-llm` для оптимизации под LLM
 
-#### ⚙️ Компактный бинарник
+#### ⚙️ Версии бинарников
+
+Мы предоставляем несколько вариантов бинарника — выберите тот, который соответствует вашим потребностям:
+
+| Версия | GUI | OCR | Просмотр MD | CLI | Размер | Для кого |
+|--------|:---:|:---:|:-----------:|:---:|--------|----------|
+| **Full** (по умолчанию) | ✅ | ✅ | ✅ | ✅ | ~25 MB | Все пользователи — полный функционал |
+| **Light** | ✅ | ❌ | ❌ | ✅ | ~10 MB | Тем, кому нужна только конвертация документов без OCR и просмотра |
+| **CLI-only** | ❌ | ✅ | ❌ | ✅ | ~18 MB | Серверы, CI/CD, скрипты — без графического интерфейса |
+
+**Что входит в каждую версию:**
+
+- **Full** — графический интерфейс (egui), распознавание текста на изображениях через Tesseract OCR (3 языка: EN/RU/ZH), просмотр Markdown в браузере с подсветкой кода (highlight.js), формулами (KaTeX) и диаграммами (Mermaid), пакетная конвертация перетаскиванием, всё в одном файле
+- **Light** — графический интерфейс и конвертация документов, но без OCR (изображения не обрабатываются) и без просмотра Markdown в браузере. Идеально для конвертации PDF/DOCX/XLSX/PPTX/HTML/XML/TXT/CSV/JSON/ZIP → Markdown
+- **CLI-only** — только командная строка, без графического интерфейса. OCR поддерживается. Подходит для автоматизации, серверов и CI/CD пайплайнов
+
+**Технические детали:**
 - **LTO + strip + panic=abort** — минимальный размер бинарника
-- Один исполняемый файл — никаких внешних зависимостей
-- Feature flags для сборки без лишнего:
-  - `default` = GUI + OCR + Preview (полная версия)
-  - `cli-only` = только CLI, без GUI
-  - `light` = только конвертация, без OCR и просмотра
-  - `full` = все функции
+- Один исполняемый файл — никаких внешних зависимостей (кроме Tesseract для OCR)
+- Feature flags для сборки: `default` = Full, `cli-only` = CLI-only, `light` = Light (собирается с `--no-default-features --features gui`)
 
 ### 📦 Установка
 
 Скачайте бинарник для вашей ОС во вкладке [Actions → Artifacts](https://github.com/AlexZander85/markitdown-rst/actions) или соберите самостоятельно:
 
 ```bash
-# Полная версия (GUI + OCR + Preview)
+# Full версия (GUI + OCR + Preview) — рекомендуется
 git clone https://github.com/AlexZander85/markitdown-rst.git
 cd markitdown-rst
 cargo build --release
 
-# Только CLI (без GUI)
-cargo build --release --no-default-features --features cli-only
-
-# Лёгкая версия (GUI без OCR и Preview)
+# Light версия (GUI без OCR и Preview)
 cargo build --release --no-default-features --features gui
+
+# CLI-only версия (без GUI)
+cargo build --release --no-default-features --features cli-only
 ```
 
 ### 🏗️ Архитектура
@@ -262,30 +274,42 @@ MIT License — используйте свободно.
 - `markitdown-cli ocr-check` — check Tesseract and tessdata availability
 - Colored output, `--optimize-llm` flag for LLM optimization
 
-#### ⚙️ Compact Binary
+#### ⚙️ Binary Editions
+
+We provide several binary variants — choose the one that fits your needs:
+
+| Edition | GUI | OCR | MD Preview | CLI | Size | For whom |
+|---------|:---:|:---:|:----------:|:---:|------|----------|
+| **Full** (default) | ✅ | ✅ | ✅ | ✅ | ~25 MB | All users — complete functionality |
+| **Light** | ✅ | ❌ | ❌ | ✅ | ~10 MB | Document conversion only, no OCR or preview |
+| **CLI-only** | ❌ | ✅ | ❌ | ✅ | ~18 MB | Servers, CI/CD, scripts — no graphical interface |
+
+**What each edition includes:**
+
+- **Full** — graphical interface (egui), text recognition in images via Tesseract OCR (3 languages: EN/RU/ZH), Markdown preview in browser with code highlighting (highlight.js), math formulas (KaTeX) and diagrams (Mermaid), batch conversion via drag & drop, all in a single file
+- **Light** — graphical interface and document conversion, but without OCR (images are not processed) and without Markdown preview in browser. Ideal for converting PDF/DOCX/XLSX/PPTX/HTML/XML/TXT/CSV/JSON/ZIP → Markdown
+- **CLI-only** — command line only, no graphical interface. OCR is supported. Suitable for automation, servers, and CI/CD pipelines
+
+**Technical details:**
 - **LTO + strip + panic=abort** — minimal binary size
-- Single executable — no external dependencies
-- Feature flags for lean builds:
-  - `default` = GUI + OCR + Preview (full version)
-  - `cli-only` = CLI only, no GUI
-  - `light` = conversion only, no OCR or preview
-  - `full` = all features
+- Single executable — no external dependencies (except Tesseract for OCR)
+- Feature flags for building: `default` = Full, `cli-only` = CLI-only, `light` = Light (build with `--no-default-features --features gui`)
 
 ### 📦 Installation
 
 Download the binary for your OS from [Actions → Artifacts](https://github.com/AlexZander85/markitdown-rst/actions) or build from source:
 
 ```bash
-# Full version (GUI + OCR + Preview)
+# Full edition (GUI + OCR + Preview) — recommended
 git clone https://github.com/AlexZander85/markitdown-rst.git
 cd markitdown-rst
 cargo build --release
 
-# CLI only (no GUI)
-cargo build --release --no-default-features --features cli-only
-
-# Light version (GUI without OCR and Preview)
+# Light edition (GUI without OCR and Preview)
 cargo build --release --no-default-features --features gui
+
+# CLI-only edition (no GUI)
+cargo build --release --no-default-features --features cli-only
 ```
 
 ### 🏗️ Architecture
@@ -432,30 +456,42 @@ MIT License — use freely.
 - `markitdown-cli ocr-check` — 检查 Tesseract 和 tessdata 可用性
 - 彩色输出，`--optimize-llm` 标志用于 LLM 优化
 
-#### ⚙️ 紧凑二进制文件
+#### ⚙️ 二进制文件版本
+
+我们提供多种二进制文件变体——请根据您的需求选择：
+
+| 版本 | GUI | OCR | MD 预览 | CLI | 大小 | 适用对象 |
+|------|:---:|:---:|:-------:|:---:|------|----------|
+| **Full**（默认） | ✅ | ✅ | ✅ | ✅ | ~25 MB | 所有用户——完整功能 |
+| **Light** | ✅ | ❌ | ❌ | ✅ | ~10 MB | 仅需文档转换，不需要 OCR 和预览 |
+| **CLI-only** | ❌ | ✅ | ❌ | ✅ | ~18 MB | 服务器、CI/CD、脚本——无图形界面 |
+
+**各版本包含内容：**
+
+- **Full** — 图形界面（egui），通过 Tesseract OCR 识别图像中的文字（3种语言：EN/RU/ZH），在浏览器中预览 Markdown，支持代码高亮（highlight.js）、数学公式（KaTeX）和图表（Mermaid），拖放批量转换，全部集成在单个文件中
+- **Light** — 图形界面和文档转换，但不包含 OCR（图像不会被处理）和浏览器中的 Markdown 预览。适合 PDF/DOCX/XLSX/PPTX/HTML/XML/TXT/CSV/JSON/ZIP → Markdown 转换
+- **CLI-only** — 仅命令行，无图形界面。支持 OCR。适用于自动化、服务器和 CI/CD 流水线
+
+**技术细节：**
 - **LTO + strip + panic=abort** — 最小二进制文件大小
-- 单个可执行文件——无外部依赖
-- 特性标志用于精简构建：
-  - `default` = GUI + OCR + 预览（完整版）
-  - `cli-only` = 仅 CLI，无 GUI
-  - `light` = 仅转换，无 OCR 和预览
-  - `full` = 所有功能
+- 单个可执行文件——无外部依赖（OCR 需要 Tesseract）
+- 构建特性标志：`default` = Full，`cli-only` = CLI-only，`light` = Light（使用 `--no-default-features --features gui` 构建）
 
 ### 📦 安装
 
 从 [Actions → Artifacts](https://github.com/AlexZander85/markitdown-rst/actions) 下载适合您操作系统的二进制文件，或从源代码构建：
 
 ```bash
-# 完整版（GUI + OCR + 预览）
+# Full 版本（GUI + OCR + 预览）——推荐
 git clone https://github.com/AlexZander85/markitdown-rst.git
 cd markitdown-rst
 cargo build --release
 
-# 仅 CLI（无 GUI）
-cargo build --release --no-default-features --features cli-only
-
-# 轻量版（GUI 无 OCR 和预览）
+# Light 版本（GUI 无 OCR 和预览）
 cargo build --release --no-default-features --features gui
+
+# CLI-only 版本（无 GUI）
+cargo build --release --no-default-features --features cli-only
 ```
 
 ### 🏗️ 架构
