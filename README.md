@@ -46,6 +46,7 @@
 | 🔒 **Safety** | memory-safe (borrow checker) | runtime errors |
 | 🌐 **Dependencies** | zero (OCR embedded) | pip, venv, system libs |
 | 🔧 **Deployment** | copy → run | Docker / pip / virtualenv |
+| 🧵 **Multithreading** | Tokio + Rayon + FuturesUnordered | single-threaded or GIL-limited |
 | 🖥️ **Cross-platform** | Linux/macOS/Windows native | requires Python in each OS |
 
 ### ✨ Key Features
@@ -346,6 +347,7 @@ cargo test --all-features
 | 🔒 **Безопасность** | memory-safe (borrow checker) | runtime-ошибки |
 | 🌐 **Зависимости** | ноль (OCR встроен) | pip, venv, system libs |
 | 🔧 **Развёртывание** | скопировал → запустил | Docker / pip / virtualenv |
+| 🧵 **Многопоточность** | Tokio + Rayon + FuturesUnordered | однопоточные или ограничены GIL |
 | 🖥️ **Кроссплатформенность** | Linux/macOS/Windows нативно | требует Python в каждой ОС |
 
 ### ✨ Ключевые возможности
@@ -646,6 +648,7 @@ cargo test --all-features
 | 🔒 安全 | 内存安全（borrow checker） | 运行时错误 |
 | 🌐 依赖 | 零（OCR 内置） | pip、venv、系统库 |
 | 🔧 部署 | 复制 → 运行 | Docker / pip / virtualenv |
+| 🧵 **多线程** | Tokio + Rayon + FuturesUnordered | 单线程或受 GIL 限制 |
 | 🖥️ 跨平台 | Linux/macOS/Windows 原生 | 每个 OS 都需要 Python |
 
 ### ✨ 核心功能

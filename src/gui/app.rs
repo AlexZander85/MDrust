@@ -1,11 +1,11 @@
 //! Main GUI application for MarkItDown-RST
 //!
 //! Professional dark theme with:
-//! - TopBar with icon, title, theme toggle, language selector
+//! - TopBar with cached icon, title, theme toggle, language selector
 //! - Sidebar (240px) with actions, settings, OCR checkboxes, Convert button
 //! - Central panel with dropzone / file cards + preview
 //! - File cards with format icons, status colors, progress bars
-//! - Preview with Rendered/Raw/Metadata tabs
+//! - Preview with Rendered (egui_commonmark) / Raw / Metadata tabs
 //! - Status bar with ETA
 //! - Zoom hotkeys (Ctrl+/Ctrl-/Ctrl+0)
 //! - OCR defaults: eng=true, rus=false, chi_sim=false
@@ -62,14 +62,16 @@ pub struct MarkItDownApp {
     preview_text: String,
     /// Last conversion results for preview
     last_results: Vec<(PathBuf, String)>,
+    /// Selected preview file index — tracked to avoid cloning every frame
+    last_selected_preview: usize,
     /// Selected preview file index
     selected_preview: usize,
     /// Tokio runtime for async operations
     runtime: Arc<Runtime>,
-    /// mpsc channel receiver for batch results
-    result_rx: std::sync::mpsc::Receiver<Result<crate::batch::BatchResult, String>>,
+    /// mpsc channel receiver for batch results (includes auto-save)
+    result_rx: std::sync::mpsc::Receiver<Result<(), String>>,
     /// mpsc channel sender for batch results
-    result_tx: std::sync::mpsc::Sender<Result<crate::batch::BatchResult, String>>,
+    result_tx: std::sync::mpsc::Sender<Result<(), String>>,
     /// Output format
     output_format: OutputFormat,
     /// Internationalization
@@ -94,6 +96,10 @@ pub struct MarkItDownApp {
     zoom: f32,
     /// Notification message
     notification: Option<(String, std::time::Instant)>,
+    /// Cached app icon texture — loaded once, not every frame
+    app_icon: Option<egui::TextureHandle>,
+    /// CommonMark cache for rendered preview
+    md_cache: egui_commonmark::CommonMarkCache,
 }
 
 impl MarkItDownApp {
@@ -129,8 +135,9 @@ impl MarkItDownApp {
             convert_start: None,
             preview_text: String::new(),
             last_results: Vec::new(),
+            last_selected_preview: 0,
             selected_preview: 0,
-            runtime: Arc::new(Runtime::new().unwrap()),
+            runtime: Arc::new(Runtime::new().expect("failed to create tokio runtime")),
             result_rx,
             result_tx,
             output_format: OutputFormat::default(),
@@ -147,6 +154,8 @@ impl MarkItDownApp {
             preview_tab: PreviewTab::Rendered,
             zoom: 1.0,
             notification: None,
+            app_icon: None,
+            md_cache: egui_commonmark::CommonMarkCache::default(),
         }
     }
 
@@ -161,64 +170,12 @@ impl MarkItDownApp {
         langs
     }
 
-    /// Pump mpsc channels for results
+    /// Pump mpsc channels for results — no blocking I/O on UI thread
     fn pump_channels(&mut self) {
         if let Ok(result) = self.result_rx.try_recv() {
             match result {
-                Ok(batch_result) => {
+                Ok(()) => {
                     self.state = AppState::Completed;
-                    self.progress_done = batch_result.successes.len();
-
-                    self.last_results = batch_result.successes.iter()
-                        .map(|(p, r)| (p.clone(), r.full_markdown()))
-                        .collect();
-
-                    if !self.last_results.is_empty() {
-                        self.selected_preview = 0;
-                        self.preview_text = self.last_results[0].1.clone();
-                    }
-
-                    let mut preview = String::new();
-                    for (path, conversion) in &batch_result.successes {
-                        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                        preview.push_str(&format!("## {} ({} {})\n\n", filename, conversion.metadata.word_count, self.i18n.word_count()));
-                        let md = conversion.full_markdown();
-                        if md.len() > 2000 {
-                            preview.push_str(&md[..2000]);
-                            preview.push_str("\n\n... (truncated)\n\n");
-                        } else {
-                            preview.push_str(&md);
-                            preview.push_str("\n\n");
-                        }
-                    }
-
-                    if !batch_result.failures.is_empty() {
-                        preview.push_str(&format!("## {} {}\n\n", self.i18n.failed_files(), batch_result.failures.len()));
-                        for (path, error) in &batch_result.failures {
-                            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                            preview.push_str(&format!("- **{}**: {}\n", filename, error));
-                        }
-                    }
-
-                    preview.push_str(&format!(
-                        "\n---\n{}/{} {} | {:.2}s | {} {}",
-                        batch_result.successes.len(),
-                        batch_result.total_files,
-                        self.i18n.files_converted(),
-                        batch_result.total_time_secs,
-                        batch_result.total_word_count(),
-                        self.i18n.total_words()
-                    ));
-
-                    self.preview_text = preview;
-
-                    // Auto-save
-                    if !self.output_dir.is_empty() {
-                        let output_dir = PathBuf::from(&self.output_dir);
-                        let rt = self.runtime.clone();
-                        let _ = rt.block_on(batch_result.save_all(&output_dir, self.save_combined));
-                    }
-
                     self.notification = Some((self.i18n.completed().to_string(), std::time::Instant::now()));
                 }
                 Err(e) => {
@@ -273,7 +230,7 @@ impl MarkItDownApp {
         }
     }
 
-    /// Start the conversion
+    /// Start the conversion — save is done in the worker thread, not on UI thread
     fn start_conversion(&mut self) {
         if self.files.is_empty() {
             return;
@@ -288,6 +245,8 @@ impl MarkItDownApp {
         let output_format = self.output_format.clone();
         let parallel_jobs = self.parallel_jobs;
         let tx = self.result_tx.clone();
+        let output_dir = PathBuf::from(&self.output_dir);
+        let save_combined = self.save_combined;
         #[cfg(feature = "ocr")]
         let ocr_languages = self.selected_ocr_languages();
 
@@ -307,7 +266,14 @@ impl MarkItDownApp {
                     .output_format(output_format)
                     .parallel(parallel_jobs);
 
-                processor.execute().await
+                let batch_result = processor.execute().await?;
+
+                // Auto-save on the worker thread — does NOT block UI
+                if !output_dir.as_os_str().is_empty() {
+                    let _ = batch_result.save_all(&output_dir, save_combined).await;
+                }
+
+                Ok::<(), anyhow::Error>(())
             });
 
             let _ = tx.send(result.map_err(|e| e.to_string()));
@@ -319,17 +285,19 @@ impl MarkItDownApp {
     fn draw_topbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.add_space(8.0);
         ui.horizontal_centered(|ui| {
-            // App icon (loaded from embedded PNG)
-            if let Ok(icon) = image::load_from_memory(include_bytes!("../../assets/icon-256.png")) {
-                let icon = icon.resize(28, 28, image::imageops::FilterType::Lanczos3);
-                let rgba = icon.to_rgba8();
+            // App icon — cached in struct, loaded once (not every frame)
+            let icon = self.app_icon.get_or_insert_with(|| {
+                let img = image::load_from_memory(include_bytes!("../../assets/icon-256.png"))
+                    .expect("failed to load app icon")
+                    .resize(28, 28, image::imageops::FilterType::Lanczos3);
+                let rgba = img.to_rgba8();
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(
                     [rgba.width() as usize, rgba.height() as usize],
                     &rgba,
                 );
-                let texture = ctx.load_texture("app-icon", color_image, egui::TextureOptions::LINEAR);
-                ui.image(&texture);
-            }
+                ctx.load_texture("app-icon", color_image, egui::TextureOptions::LINEAR)
+            });
+            ui.image(&*icon);
             ui.add_space(6.0);
             ui.label(egui::RichText::new("MarkItDown-RST").size(16.0).strong());
             ui.label(egui::RichText::new("\u{00b7} Document to Markdown")
@@ -462,6 +430,7 @@ impl MarkItDownApp {
             self.preview_text.clear();
             self.last_results.clear();
             self.selected_preview = 0;
+            self.last_selected_preview = 0;
             self.state = AppState::Idle;
         }
 
@@ -550,7 +519,7 @@ impl MarkItDownApp {
             });
 
             cols[1].vertical(|ui| {
-                self.draw_preview(ui);
+                self.draw_preview(ui, ctx);
             });
         });
     }
@@ -629,12 +598,13 @@ impl MarkItDownApp {
         remove
     }
 
-    fn draw_preview(&mut self, ui: &mut egui::Ui) {
+    fn draw_preview(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(self.i18n.preview()).heading());
 
             if self.last_results.len() > 1 {
                 ui.add_space(8.0);
+                let prev_selected = self.selected_preview;
                 egui::ComboBox::from_id_salt("preview_select")
                     .selected_text(
                         self.last_results.get(self.selected_preview)
@@ -648,8 +618,11 @@ impl MarkItDownApp {
                         }
                     });
 
-                if let Some((_, md)) = self.last_results.get(self.selected_preview) {
-                    self.preview_text = md.clone();
+                // Only clone when selection actually changes
+                if self.selected_preview != prev_selected {
+                    if let Some((_, md)) = self.last_results.get(self.selected_preview) {
+                        self.preview_text = md.clone();
+                    }
                 }
             }
 
@@ -714,11 +687,12 @@ impl MarkItDownApp {
                 });
             } else {
                 match self.preview_tab {
-                    PreviewTab::Rendered | PreviewTab::Raw => {
-                        // Show markdown as monospace text
-                        // For "Rendered", we use pulldown-cmark to produce HTML,
-                        // but since we can't render HTML in egui natively, we show
-                        // the formatted text with some visual enhancement
+                    PreviewTab::Rendered => {
+                        // Rendered markdown using egui_commonmark — real rendering in egui
+                        let mut viewer = egui_commonmark::CommonMarkViewer::new();
+                        viewer.show(ui, &mut self.md_cache, &self.preview_text);
+                    }
+                    PreviewTab::Raw => {
                         ui.label(egui::RichText::new(&self.preview_text)
                             .monospace()
                             .size(12.0 * self.zoom));

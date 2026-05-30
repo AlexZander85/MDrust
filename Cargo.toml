@@ -1,6 +1,6 @@
 [package]
 name = "markitdown-rst"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["MarkItDown-RST Contributors"]
 description = "Multi-threaded document-to-markdown converter with OCR, multilingual UI, and MD viewer"
@@ -86,6 +86,9 @@ egui = "0.31"
 egui_extras = { version = "0.31", default-features = false, features = ["image"] }
 rfd = "0.15"
 
+# In-egui Markdown rendering (for Rendered tab — real rendering, not just monospace)
+egui_commonmark = { version = "0.20", optional = true }
+
 # UUID for temp files (preview)
 uuid = { version = "1.11", features = ["v4"], optional = true }
 
@@ -95,9 +98,19 @@ mimalloc = { version = "0.1", default-features = false }
 # Faster mutex
 parking_lot = "0.12"
 
+# ── Aggressive optimizations ──
+# Content-hash cache — skip re-converting identical files
+blake3 = "1.5"
+# Compact string — reduces allocations for file names/paths in batch mode
+compact_str = "0.8"
+# Small inline vectors — avoids heap allocation for small file lists
+smallvec = "1.13"
+# Faster hash map — replaces std HashMap in hot paths
+ahash = "0.8"
+
 [features]
 default = ["gui", "ocr", "preview"]
-gui = ["image"]
+gui = ["image", "egui_commonmark"]
 cli-only = []
 ocr = ["image"]
 preview = ["comrak", "open", "uuid"]

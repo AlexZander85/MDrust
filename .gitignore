@@ -17,11 +17,11 @@ desktop.ini
 .env
 .env.local
 
-# Binary releases
-*.exe
-*.dll
-*.so
-*.dylib
+# Binary releases (not in assets/)
+/*.exe
+/*.dll
+/*.so
+/*.dylib
 
 # Downloaded artifacts
 /artifacts/
