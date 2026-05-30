@@ -2912,8 +2912,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "markitdown-rs"
-version = "2.0.0"
+name = "markitdown-rst"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
