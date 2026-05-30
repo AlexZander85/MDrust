@@ -1,6 +1,6 @@
 //! CSV/TSV to Markdown converter
 
-use super::{ConversionResult, DocumentConverter, DocumentMetadata};
+use super::{ConversionResult, Converter, DocumentConverter, DocumentMetadata};
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -123,5 +123,5 @@ fn extract_csv_to_markdown(path: &Path, file_size: u64) -> Result<ConversionResu
         file_size_bytes: file_size,
     };
 
-    Ok(ConversionResult::from_markdown(markdown, metadata))
+    Ok(ConversionResult::from_markdown_no_recount(markdown, metadata))
 }

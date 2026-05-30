@@ -1,9 +1,9 @@
 [package]
 name = "markitdown-rst"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["MarkItDown-RST Contributors"]
-description = "Multi-threaded document-to-markdown converter with OCR, multilingual UI, and MD viewer (MarkItDown-RST)"
+description = "Multi-threaded document-to-markdown converter with OCR, multilingual UI, and MD viewer"
 license = "MIT"
 rust-version = "1.70"
 
@@ -20,46 +20,36 @@ name = "markitdown-cli"
 path = "src/bin/cli.rs"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1", features = ["full"] }
+# Async runtime — slim features instead of "full"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "io-util", "time"] }
 futures = "0.3"
+futures-util = "0.3"
 async-trait = "0.1"
-
-# Parallelism
-rayon = "1.10"
-num_cpus = "1.16"
 
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
 
-# Serialization
+# Serialization — only where actually needed
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Document parsing - Core formats
+# Document parsing
 lopdf = "0.35"
 pdf-extract = "0.7"
-
-# HTML/XML
-scraper = "0.21"
-html2text = "0.14"
 quick-xml = "0.37"
-
-# Office formats
 docx-rs = "0.4"
-umya-spreadsheet = "2.3"
+calamine = "0.26"
 zip = "2.2"
-
-# CSV
 csv = "1.3"
+htmd = "0.1"
 
 # Markdown rendering
 pulldown-cmark = "0.13"
 comrak = { version = "0.29", default-features = false, optional = true }
 
 # Image processing (used by OCR)
-image = { version = "0.25", optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 
 # File detection
 mime_guess = "2.0"
@@ -67,7 +57,7 @@ mime = "0.3"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -78,8 +68,8 @@ console = "0.15"
 # Walk directory
 walkdir = "2.5"
 
-# Time
-chrono = "0.4"
+# Time — lighter than chrono
+time = { version = "0.3", features = ["formatting", "macros", "serde"] }
 
 # Regex
 regex = "1.11"
@@ -93,43 +83,51 @@ open = { version = "5.3", optional = true }
 # eframe/egui for GUI
 eframe = "0.31"
 egui = "0.31"
-egui_extras = { version = "0.31", features = ["image", "file"] }
+egui_extras = { version = "0.31", default-features = false, features = ["image"] }
 rfd = "0.15"
 
 # UUID for temp files (preview)
 uuid = { version = "1.11", features = ["v4"], optional = true }
 
+# Global allocator — faster than system allocator
+mimalloc = { version = "0.1", default-features = false }
+
+# Faster mutex
+parking_lot = "0.12"
+
 [features]
-# Default = full version with everything
 default = ["gui", "ocr", "preview"]
-
-# GUI mode (eframe)
 gui = []
-
-# CLI-only mode (no GUI deps compiled into binary)
 cli-only = []
-
-# OCR support: Tesseract CLI + embedded tessdata (eng/rus/chi_sim)
-# Adds ~19 MB to binary from embedded language data
 ocr = ["image"]
-
-# Markdown preview: browser-based viewer with highlight.js, KaTeX, Mermaid
-# Adds comrak for MD→HTML and open for browser launching
 preview = ["comrak", "open", "uuid"]
-
-# Convenience: full = all features
 full = ["ocr", "preview"]
-
-# Light = core conversion only (no OCR, no preview)
-# Use: cargo build --release --no-default-features --features gui
 light = []
+logs = ["dep:tracing-subscriber"]
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "fat"
 codegen-units = 1
-strip = true
+strip = "symbols"
 panic = "abort"
+overflow-checks = false
+debug = false
+incremental = false
+
+[profile.release-tiny]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.release-perf]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
 
 [profile.dev]
 opt-level = 0

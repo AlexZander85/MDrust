@@ -1,104 +1,51 @@
-//! HTML and XML to Markdown converters
+//! HTML and XML to Markdown converters — using htmd (lightweight)
 
-use super::{ConversionResult, DocumentConverter, DocumentMetadata};
+use super::{ConversionResult, Converter, DocumentConverter, DocumentMetadata};
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::path::Path;
 
-/// HTML to Markdown converter
 pub struct HtmlConverter;
 
 impl HtmlConverter {
-    pub fn new() -> Self {
-        Self
-    }
+    pub fn new() -> Self { Self }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl DocumentConverter for HtmlConverter {
-    fn format(&self) -> InputFormat {
-        InputFormat::Html
-    }
+    fn format(&self) -> InputFormat { InputFormat::Html }
 
-    async fn convert(
-        &self,
-        path: &Path,
-        _output_format: &OutputFormat,
-    ) -> Result<ConversionResult> {
-        let path = path.to_path_buf();
-        let file_size = tokio::fs::metadata(&path).await?.len();
+    async fn convert(&self, path: &Path, _output_format: &OutputFormat) -> Result<ConversionResult> {
+        let file_size = tokio::fs::metadata(path).await?.len();
+        let html = tokio::fs::read_to_string(path).await?;
+        let path_buf = path.to_path_buf();
 
-        let result = tokio::task::spawn_blocking(move || {
-            extract_html_to_markdown(&path, file_size)
-        })
-        .await??;
+        let result = tokio::task::spawn_blocking(move || -> Result<ConversionResult> {
+            let converter = htmd::HtmlToMarkdown::builder()
+                .skip_tags(vec!["script", "style", "noscript"])
+                .build();
+            let markdown = converter.convert(&html)?;
+
+            let word_count = markdown.split_whitespace().count();
+            let title = markdown.lines()
+                .find(|l| l.starts_with("# ") || l.starts_with("## "))
+                .map(|l| l.trim_start_matches('#').trim().to_string());
+
+            let metadata = DocumentMetadata {
+                title,
+                author: None,
+                page_count: 1,
+                word_count,
+                source_format: InputFormat::Html,
+                source_path: path_buf.display().to_string(),
+                file_size_bytes: file_size,
+            };
+
+            Ok(ConversionResult::from_markdown_no_recount(markdown, metadata))
+        }).await??;
 
         Ok(result)
-    }
-}
-
-fn extract_html_to_markdown(path: &Path, file_size: u64) -> Result<ConversionResult> {
-    let html_content = std::fs::read_to_string(path)?;
-
-    // Extract title from <title> tag
-    let title = extract_html_title(&html_content);
-
-    // Use html2text for conversion
-    let markdown = html2text::from_read(html_content.as_bytes(), 80)
-        .map_err(|e| anyhow::anyhow!("HTML conversion error: {}", e))?;
-
-    let word_count = markdown.split_whitespace().count();
-
-    let metadata = DocumentMetadata {
-        title,
-        author: None,
-        page_count: 1,
-        word_count,
-        source_format: InputFormat::Html,
-        source_path: path.display().to_string(),
-        file_size_bytes: file_size,
-    };
-
-    Ok(ConversionResult::from_markdown(markdown, metadata))
-}
-
-fn extract_html_title(html: &str) -> Option<String> {
-    use quick_xml::events::Event;
-    use quick_xml::Reader;
-
-    let mut reader = Reader::from_str(html);
-    let mut in_title = false;
-    let mut title = String::new();
-    let mut buf = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
-                if e.local_name().as_ref() == b"title" {
-                    in_title = true;
-                }
-            }
-            Ok(Event::Text(ref e)) => {
-                if in_title {
-                    title = e.unescape().unwrap_or_default().to_string();
-                }
-            }
-            Ok(Event::End(ref e)) => {
-                if e.local_name().as_ref() == b"title" {
-                    in_title = false;
-                }
-            }
-            Ok(Event::Eof) => break,
-            _ => {}
-        }
-        buf.clear();
-    }
-
-    if title.trim().is_empty() {
-        None
-    } else {
-        Some(title.trim().to_string())
     }
 }
 
@@ -106,40 +53,27 @@ fn extract_html_title(html: &str) -> Option<String> {
 pub struct XmlConverter;
 
 impl XmlConverter {
-    pub fn new() -> Self {
-        Self
-    }
+    pub fn new() -> Self { Self }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl DocumentConverter for XmlConverter {
-    fn format(&self) -> InputFormat {
-        InputFormat::Xml
-    }
+    fn format(&self) -> InputFormat { InputFormat::Xml }
 
-    async fn convert(
-        &self,
-        path: &Path,
-        _output_format: &OutputFormat,
-    ) -> Result<ConversionResult> {
+    async fn convert(&self, path: &Path, _output_format: &OutputFormat) -> Result<ConversionResult> {
         let path = path.to_path_buf();
         let file_size = tokio::fs::metadata(&path).await?.len();
-
         let result = tokio::task::spawn_blocking(move || {
             extract_xml_to_markdown(&path, file_size)
-        })
-        .await??;
-
+        }).await??;
         Ok(result)
     }
 }
 
 fn extract_xml_to_markdown(path: &Path, file_size: u64) -> Result<ConversionResult> {
     let xml_content = std::fs::read_to_string(path)?;
-
     let markdown = xml_to_markdown(&xml_content);
     let word_count = markdown.split_whitespace().count();
-
     let metadata = DocumentMetadata {
         title: None,
         author: None,
@@ -149,33 +83,24 @@ fn extract_xml_to_markdown(path: &Path, file_size: u64) -> Result<ConversionResu
         source_path: path.display().to_string(),
         file_size_bytes: file_size,
     };
-
-    Ok(ConversionResult::from_markdown(markdown, metadata))
+    Ok(ConversionResult::from_markdown_no_recount(markdown, metadata))
 }
 
 fn xml_to_markdown(xml: &str) -> String {
     use quick_xml::events::Event;
     use quick_xml::Reader;
-
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
-
     let mut markdown = String::new();
     let mut depth: u32 = 0;
     let mut buf = Vec::new();
-
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let local_name = e.local_name();
-                let name = String::from_utf8_lossy(local_name.as_ref()).to_string();
-                if depth == 0 {
-                    markdown.push_str(&format!("# {}\n\n", name));
-                } else if depth == 1 {
-                    markdown.push_str(&format!("## {}\n\n", name));
-                } else {
-                    markdown.push_str(&format!("**{}:** ", name));
-                }
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
+                if depth == 0 { markdown.push_str(&format!("# {}\n\n", name)); }
+                else if depth == 1 { markdown.push_str(&format!("## {}\n\n", name)); }
+                else { markdown.push_str(&format!("**{}:** ", name)); }
                 depth += 1;
             }
             Ok(Event::Text(ref e)) => {
@@ -186,14 +111,11 @@ fn xml_to_markdown(xml: &str) -> String {
                     markdown.push('\n');
                 }
             }
-            Ok(Event::End(_)) => {
-                depth = depth.saturating_sub(1);
-            }
+            Ok(Event::End(_)) => { depth = depth.saturating_sub(1); }
             Ok(Event::Eof) => break,
             _ => {}
         }
         buf.clear();
     }
-
     markdown
 }

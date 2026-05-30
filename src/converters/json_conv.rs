@@ -4,7 +4,7 @@
 //! If the JSON is an array of objects, also generates a markdown table
 //! from the first-level keys of the objects.
 
-use super::{ConversionResult, DocumentConverter, DocumentMetadata};
+use super::{ConversionResult, Converter, DocumentConverter, DocumentMetadata};
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -122,7 +122,7 @@ fn extract_json_to_markdown(path: &Path, file_size: u64) -> Result<ConversionRes
         file_size_bytes: file_size,
     };
 
-    Ok(ConversionResult::from_markdown(markdown, metadata))
+    Ok(ConversionResult::from_markdown_no_recount(markdown, metadata))
 }
 
 /// Format a JSON value as a human-readable string for table cells.

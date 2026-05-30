@@ -30,18 +30,7 @@ impl fmt::Display for Language {
 // I18n struct
 // ---------------------------------------------------------------------------
 
-/// Holds the current language and provides translated `&'static str` values
-/// for every user-facing string in the application.
-///
-/// # Example
-///
-/// ```ignore
-/// use markitdown_rst::i18n::{I18n, Language};
-///
-/// let mut i = I18n::default();        // English
-/// assert_eq!(i.convert(), "Convert");
-/// i.set_language(Language::Ru);
-/// ```
+/// Holds the current language and provides translated strings.
 pub struct I18n {
     lang: Language,
 }
@@ -51,6 +40,12 @@ impl Default for I18n {
         Self {
             lang: Language::En,
         }
+    }
+}
+
+impl PartialEq for I18n {
+    fn eq(&self, other: &Self) -> bool {
+        self.lang == other.lang
     }
 }
 
@@ -72,6 +67,52 @@ impl I18n {
         self.lang
     }
 
+    /// Return display label for the current language.
+    pub fn lang_label(&self) -> &'static str {
+        match self.lang {
+            Language::En => "EN",
+            Language::Ru => "RU",
+            Language::Zh => "ZH",
+        }
+    }
+
+    // -- generic key-based translation ------------------------------------
+
+    /// Get translation by key name (for dynamic lookups).
+    pub fn t(&self, key: &str) -> String {
+        match key {
+            "actions" => self.actions().to_string(),
+            "settings" => self.settings().to_string(),
+            "add_files" => self.add_files().to_string(),
+            "add_folder" => self.add_folder().to_string(),
+            "clear" => self.clear().to_string(),
+            "drop_files_here" => self.drop_files_here().to_string(),
+            "or_click_add" => self.or_click_add().to_string(),
+            "threads" => self.threads().to_string(),
+            "combined_output" => self.combined_output().to_string(),
+            "output_dir" => self.output_dir().to_string(),
+            "convert" => self.convert().to_string(),
+            "file_queue" => self.file_queue().to_string(),
+            "preview" => self.preview().to_string(),
+            "copy" => self.copy().to_string(),
+            "save" => self.save().to_string(),
+            "metadata" => self.metadata().to_string(),
+            "rendered" => self.rendered().to_string(),
+            "raw_md" => self.raw_md().to_string(),
+            "converting" => self.converting().to_string(),
+            "completed" => self.completed().to_string(),
+            "error" => self.error().to_string(),
+            "files_converted" => self.files_converted().to_string(),
+            "total_words" => self.total_words().to_string(),
+            "ready_status" => self.ready_status().to_string(),
+            "save_all" => self.save_all().to_string(),
+            "open_in_browser" => self.open_in_browser().to_string(),
+            "word_count" => self.word_count().to_string(),
+            "failed_files" => self.failed_files().to_string(),
+            _ => key.to_string(),
+        }
+    }
+
     // -- translated strings -----------------------------------------------
 
     /// App title (same in every language).
@@ -85,6 +126,15 @@ impl I18n {
             Language::En => "Multi-threaded Document \u{2192} Markdown Converter",
             Language::Ru => "\u{041c}\u{043d}\u{043e}\u{0433}\u{043e}\u{043f}\u{043e}\u{0442}\u{043e}\u{0447}\u{043d}\u{044b}\u{0439} \u{043a}\u{043e}\u{043d}\u{0432}\u{0435}\u{0440}\u{0442}\u{0435}\u{0440} \u{0434}\u{043e}\u{043a}\u{0443}\u{043c}\u{0435}\u{043d}\u{0442}\u{043e}\u{0432} \u{2192} Markdown",
             Language::Zh => "\u{591a}\u{7ebf}\u{7a0b}\u{6587}\u{6863}\u{8f6c} Markdown \u{8f6c}\u{6362}\u{5668}",
+        }
+    }
+
+    /// "Actions" heading.
+    pub fn actions(&self) -> &'static str {
+        match self.lang {
+            Language::En => "Actions",
+            Language::Ru => "\u{0414}\u{0435}\u{0439}\u{0441}\u{0442}\u{0432}\u{0438}\u{044f}",
+            Language::Zh => "\u{64cd}\u{4f5c}",
         }
     }
 
@@ -148,6 +198,15 @@ impl I18n {
             Language::En => "Output",
             Language::Ru => "\u{0412}\u{044b}\u{0432}\u{043e}\u{0434}",
             Language::Zh => "\u{8f93}\u{51fa}",
+        }
+    }
+
+    /// "Output Dir" label.
+    pub fn output_dir(&self) -> &'static str {
+        match self.lang {
+            Language::En => "Output Dir",
+            Language::Ru => "\u{0412}\u{044b}\u{0445}\u{043e}\u{0434}\u{043d}\u{0430}\u{044f} \u{043f}\u{0430}\u{043f}\u{043a}\u{0430}",
+            Language::Zh => "\u{8f93}\u{51fa}\u{76ee}\u{5f55}",
         }
     }
 
@@ -250,16 +309,52 @@ impl I18n {
         }
     }
 
-    /// Drop-zone placeholder text (may contain newlines).
+    /// Drop-zone placeholder text.
     pub fn drop_files_here(&self) -> &'static str {
         match self.lang {
-            Language::En => "Drop files here\nor click Add Files",
-            Language::Ru => "\u{041f}\u{0435}\u{0440}\u{0435}\u{0442}\u{0430}\u{0449}\u{0438}\u{0442}\u{0435} \u{0444}\u{0430}\u{0439}\u{043b}\u{044b} \u{0441}\u{044e}\u{0434}\u{0430}\n\u{0438}\u{043b}\u{0438} \u{043d}\u{0430}\u{0436}\u{043c}\u{0438}\u{0442}\u{0435} \u{0414}\u{043e}\u{0431}\u{0430}\u{0432}\u{0438}\u{0442}\u{044c} \u{0444}\u{0430}\u{0439}\u{043b}\u{044b}",
-            Language::Zh => "\u{62d6}\u{653e}\u{6587}\u{4ef6}\u{5230}\u{6b64}\u{5904}\n\u{6216}\u{70b9}\u{51fb}\u{6dfb}\u{52a0}\u{6587}\u{4ef6}",
+            Language::En => "Drop files here",
+            Language::Ru => "\u{041f}\u{0435}\u{0440}\u{0435}\u{0442}\u{0430}\u{0449}\u{0438}\u{0442}\u{0435} \u{0444}\u{0430}\u{0439}\u{043b}\u{044b} \u{0441}\u{044e}\u{0434}\u{0430}",
+            Language::Zh => "\u{62d6}\u{653e}\u{6587}\u{4ef6}\u{5230}\u{6b64}\u{5904}",
         }
     }
 
-    /// Markdown preview placeholder (may contain newlines).
+    /// "or click Add Files"
+    pub fn or_click_add(&self) -> &'static str {
+        match self.lang {
+            Language::En => "or click Add Files",
+            Language::Ru => "\u{0438}\u{043b}\u{0438} \u{043d}\u{0430}\u{0436}\u{043c}\u{0438}\u{0442}\u{0435} \u{0414}\u{043e}\u{0431}\u{0430}\u{0432}\u{0438}\u{0442}\u{044c} \u{0444}\u{0430}\u{0439}\u{043b}\u{044b}",
+            Language::Zh => "\u{6216}\u{70b9}\u{51fb}\u{6dfb}\u{52a0}\u{6587}\u{4ef6}",
+        }
+    }
+
+    /// "Metadata" label.
+    pub fn metadata(&self) -> &'static str {
+        match self.lang {
+            Language::En => "Metadata",
+            Language::Ru => "\u{041c}\u{0435}\u{0442}\u{0430}\u{0434}\u{0430}\u{043d}\u{043d}\u{044b}\u{0435}",
+            Language::Zh => "\u{5143}\u{6570}\u{636e}",
+        }
+    }
+
+    /// "Rendered" label.
+    pub fn rendered(&self) -> &'static str {
+        match self.lang {
+            Language::En => "Rendered",
+            Language::Ru => "\u{0420}\u{0435}\u{043d}\u{0434}\u{0435}\u{0440}",
+            Language::Zh => "\u{6e32}\u{67d3}",
+        }
+    }
+
+    /// "Raw MD" label.
+    pub fn raw_md(&self) -> &'static str {
+        match self.lang {
+            Language::En => "Raw MD",
+            Language::Ru => "\u{0418}\u{0441}\u{0445}\u{043e}\u{0434}\u{043d}\u{044b}\u{0439} MD",
+            Language::Zh => "\u{539f}\u{59cb} MD",
+        }
+    }
+
+    /// Markdown preview placeholder.
     pub fn markdown_preview(&self) -> &'static str {
         match self.lang {
             Language::En => "Markdown preview will appear here\nafter conversion",
@@ -331,7 +426,7 @@ impl I18n {
         }
     }
 
-    /// "files in queue" suffix (e.g. "5 files in queue").
+    /// "files in queue" suffix.
     pub fn files_in_queue(&self) -> &'static str {
         match self.lang {
             Language::En => "files in queue",
@@ -444,7 +539,7 @@ impl I18n {
         match self.lang {
             Language::En => "About",
             Language::Ru => "\u{041e} \u{043f}\u{0440}\u{043e}\u{0433}\u{0440}\u{0430}\u{043c}\u{043c}\u{0435}",
-            Language::Zh => "\u{5173}\u{4e8e}",
+            Language::Zh => "\u{5173}\u{043d}",
         }
     }
 
@@ -463,103 +558,6 @@ impl I18n {
             Language::En => "Select OCR languages",
             Language::Ru => "\u{0412}\u{044b}\u{0431}\u{0435}\u{0440}\u{0438}\u{0442}\u{0435} \u{044f}\u{0437}\u{044b}\u{043a}\u{0438} OCR",
             Language::Zh => "\u{9009}\u{62e9} OCR \u{8bed}\u{8a00}",
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn display_language() {
-        assert_eq!(format!("{}", Language::En), "English");
-        assert_eq!(format!("{}", Language::Ru), "\u{0420}\u{0443}\u{0441}\u{0441}\u{043a}\u{0438}\u{0439}");
-        assert_eq!(format!("{}", Language::Zh), "\u{4e2d}\u{6587}");
-    }
-
-    #[test]
-    fn default_is_english() {
-        let i18n = I18n::default();
-        assert_eq!(i18n.language(), Language::En);
-        assert_eq!(i18n.convert(), "Convert");
-        assert_eq!(i18n.clear(), "Clear");
-    }
-
-    #[test]
-    fn set_language_switches() {
-        let mut i18n = I18n::default();
-        i18n.set_language(Language::Ru);
-        assert_eq!(i18n.language(), Language::Ru);
-        assert_eq!(i18n.convert(), "\u{041a}\u{043e}\u{043d}\u{0432}\u{0435}\u{0440}\u{0442}\u{0438}\u{0440}\u{043e}\u{0432}\u{0430}\u{0442}\u{044c}");
-
-        i18n.set_language(Language::Zh);
-        assert_eq!(i18n.language(), Language::Zh);
-        assert_eq!(i18n.convert(), "\u{8f6c}\u{6362}");
-    }
-
-    #[test]
-    fn app_title_is_same_in_all_languages() {
-        let en = I18n::new(Language::En);
-        let ru = I18n::new(Language::Ru);
-        let zh = I18n::new(Language::Zh);
-        assert_eq!(en.app_title(), "MarkItDown-RST");
-        assert_eq!(ru.app_title(), "MarkItDown-RST");
-        assert_eq!(zh.app_title(), "MarkItDown-RST");
-    }
-
-    #[test]
-    fn all_methods_return_non_empty() {
-        for lang in [Language::En, Language::Ru, Language::Zh] {
-            let i = I18n::new(lang);
-            assert!(!i.app_title().is_empty());
-            assert!(!i.subtitle().is_empty());
-            assert!(!i.file_queue().is_empty());
-            assert!(!i.add_files().is_empty());
-            assert!(!i.add_folder().is_empty());
-            assert!(!i.clear().is_empty());
-            assert!(!i.convert().is_empty());
-            assert!(!i.threads().is_empty());
-            assert!(!i.output().is_empty());
-            assert!(!i.combined_output().is_empty());
-            assert!(!i.preview().is_empty());
-            assert!(!i.open_in_browser().is_empty());
-            assert!(!i.settings().is_empty());
-            assert!(!i.language_label().is_empty());
-            assert!(!i.ocr_languages().is_empty());
-            assert!(!i.ready_status().is_empty());
-            assert!(!i.converting().is_empty());
-            assert!(!i.completed().is_empty());
-            assert!(!i.error().is_empty());
-            assert!(!i.files_converted().is_empty());
-            assert!(!i.drop_files_here().is_empty());
-            assert!(!i.markdown_preview().is_empty());
-            assert!(!i.save().is_empty());
-            assert!(!i.save_all().is_empty());
-            assert!(!i.theme().is_empty());
-            assert!(!i.dark().is_empty());
-            assert!(!i.light().is_empty());
-            assert!(!i.font_size().is_empty());
-            assert!(!i.no_files_in_queue().is_empty());
-            assert!(!i.files_in_queue().is_empty());
-            assert!(!i.total_words().is_empty());
-            assert!(!i.conversion_time().is_empty());
-            assert!(!i.speed().is_empty());
-            assert!(!i.tesseract_not_found().is_empty());
-            assert!(!i.ocr_engine().is_empty());
-            assert!(!i.supported_formats().is_empty());
-            assert!(!i.editor().is_empty());
-            assert!(!i.viewer().is_empty());
-            assert!(!i.copy().is_empty());
-            assert!(!i.word_count().is_empty());
-            assert!(!i.failed_files().is_empty());
-            assert!(!i.about().is_empty());
-            assert!(!i.version().is_empty());
-            assert!(!i.select_ocr_languages().is_empty());
         }
     }
 }

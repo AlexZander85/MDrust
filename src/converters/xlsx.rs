@@ -1,135 +1,99 @@
-//! XLSX to Markdown converter
+//! XLSX to Markdown converter — using calamine (read-only, 5-10x faster than umya)
 
-use super::{ConversionResult, DocumentConverter, DocumentMetadata};
+use super::{ConversionResult, Converter, DocumentConverter, DocumentMetadata};
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
 use async_trait::async_trait;
+use calamine::{open_workbook_auto, Data, Reader};
 use std::path::Path;
 
-/// XLSX converter using umya-spreadsheet
 pub struct XlsxConverter;
 
 impl XlsxConverter {
-    pub fn new() -> Self {
-        Self
-    }
+    pub fn new() -> Self { Self }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl DocumentConverter for XlsxConverter {
-    fn format(&self) -> InputFormat {
-        InputFormat::Xlsx
-    }
+    fn format(&self) -> InputFormat { InputFormat::Xlsx }
 
-    async fn convert(
-        &self,
-        path: &Path,
-        _output_format: &OutputFormat,
-    ) -> Result<ConversionResult> {
+    async fn convert(&self, path: &Path, _output_format: &OutputFormat) -> Result<ConversionResult> {
         let path = path.to_path_buf();
         let file_size = tokio::fs::metadata(&path).await?.len();
-
-        let result = tokio::task::spawn_blocking(move || {
-            extract_xlsx_to_markdown(&path, file_size)
-        })
-        .await??;
-
+        let result = tokio::task::spawn_blocking(move || -> Result<ConversionResult> {
+            let mut workbook = open_workbook_auto(&path)?;
+            let mut pages: Vec<(String, String)> = Vec::new();
+            let sheet_names = workbook.sheet_names().to_owned();
+            for sheet_name in sheet_names {
+                if let Ok(range) = workbook.worksheet_range(&sheet_name) {
+                    let md = sheet_to_markdown(&sheet_name, &range);
+                    pages.push((md, sheet_name));
+                }
+            }
+            let metadata = DocumentMetadata {
+                title: None,
+                author: None,
+                page_count: pages.len(),
+                word_count: 0,
+                source_format: InputFormat::Xlsx,
+                source_path: path.display().to_string(),
+                file_size_bytes: file_size,
+            };
+            Ok(ConversionResult::from_pages(pages, metadata))
+        }).await??;
         Ok(result)
     }
 }
 
-fn extract_xlsx_to_markdown(path: &Path, file_size: u64) -> Result<ConversionResult> {
-    let book = umya_spreadsheet::reader::xlsx::read(path)?;
+fn sheet_to_markdown(name: &str, range: &calamine::Range<Data>) -> String {
+    let (rows, cols) = range.get_size();
+    let mut md = String::with_capacity(rows * cols * 16);
+    md.push_str("## ");
+    md.push_str(name);
+    md.push_str("\n\n");
 
-    let mut markdown = String::new();
-    let mut sheet_count = 0;
-
-    for sheet in book.get_sheet_collection() {
-        sheet_count += 1;
-        let sheet_name = sheet.get_name();
-
-        markdown.push_str(&format!("## {}\n\n", sheet_name));
-
-        // Get dimensions
-        let (max_col, max_row) = sheet.get_highest_column_and_row();
-
-        if max_row == 0 || max_col == 0 {
-            markdown.push_str("*Empty sheet*\n\n");
-            continue;
-        }
-
-        // Build table data using get_cell_collection_sorted
-        let cells = sheet.get_cell_collection_sorted();
-
-        // Organize cells into a 2D grid
-        let mut grid: std::collections::HashMap<(u32, u32), String> = std::collections::HashMap::new();
-        let mut actual_max_row: u32 = 0;
-        let mut actual_max_col: u32 = 0;
-
-        for cell in &cells {
-            let coord = cell.get_coordinate();
-            let col = *coord.get_col_num();
-            let row = *coord.get_row_num();
-            let value = cell.get_value().to_string();
-            if !value.trim().is_empty() {
-                grid.insert((col, row), value.trim().to_string());
-                actual_max_row = actual_max_row.max(row);
-                actual_max_col = actual_max_col.max(col);
-            }
-        }
-
-        if grid.is_empty() {
-            markdown.push_str("*Empty sheet*\n\n");
-            continue;
-        }
-
-        // Create markdown table
-        let col_count = actual_max_col as usize;
-        if col_count > 0 {
-            // Header row (row 1)
-            markdown.push('|');
-            for c in 1..=actual_max_col {
-                let val = grid.get(&(c, 1)).cloned().unwrap_or_default();
-                markdown.push_str(&format!(" {} |", val));
-            }
-            markdown.push('\n');
-
-            // Separator
-            markdown.push('|');
-            for _ in 0..actual_max_col {
-                markdown.push_str(" --- |");
-            }
-            markdown.push('\n');
-
-            // Data rows (starting from row 2)
-            for r in 2..=actual_max_row {
-                // Check if row has any data
-                let has_data = (1..=actual_max_col).any(|c| grid.contains_key(&(c, r)));
-                if !has_data {
-                    continue;
-                }
-                markdown.push('|');
-                for c in 1..=actual_max_col {
-                    let val = grid.get(&(c, r)).cloned().unwrap_or_default();
-                    markdown.push_str(&format!(" {} |", val));
-                }
-                markdown.push('\n');
-            }
-            markdown.push('\n');
-        }
+    if rows == 0 || cols == 0 {
+        md.push_str("_(empty)_\n");
+        return md;
     }
 
-    let word_count = markdown.split_whitespace().count();
+    // Header row
+    for c in 0..cols {
+        md.push_str("| ");
+        if let Some(cell) = range.get((0, c)) {
+            md.push_str(&cell_to_string(cell));
+        }
+        md.push(' ');
+    }
+    md.push_str("|\n");
 
-    let metadata = DocumentMetadata {
-        title: None,
-        author: None,
-        page_count: sheet_count,
-        word_count,
-        source_format: InputFormat::Xlsx,
-        source_path: path.display().to_string(),
-        file_size_bytes: file_size,
-    };
+    // Separator
+    for _ in 0..cols { md.push_str("|---"); }
+    md.push_str("|\n");
 
-    Ok(ConversionResult::from_markdown(markdown, metadata))
+    // Data rows
+    for r in 1..rows {
+        for c in 0..cols {
+            md.push_str("| ");
+            if let Some(cell) = range.get((r, c)) {
+                md.push_str(&cell_to_string(cell));
+            }
+            md.push(' ');
+        }
+        md.push_str("|\n");
+    }
+    md
+}
+
+fn cell_to_string(cell: &Data) -> String {
+    match cell {
+        Data::Empty => String::new(),
+        Data::String(s) => s.replace('|', "\\|").replace('\n', " "),
+        Data::Float(f) => f.to_string(),
+        Data::Int(i) => i.to_string(),
+        Data::Bool(b) => b.to_string(),
+        Data::DateTime(dt) => dt.to_string(),
+        Data::DateTimeIso(s) | Data::DurationIso(s) => s.clone(),
+        Data::Error(e) => format!("ERR({:?})", e),
+    }
 }

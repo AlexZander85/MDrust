@@ -1,6 +1,6 @@
 //! PPTX to Markdown converter
 
-use super::{ConversionResult, DocumentConverter, DocumentMetadata};
+use super::{ConversionResult, Converter, DocumentConverter, DocumentMetadata};
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
 use async_trait::async_trait;

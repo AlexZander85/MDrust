@@ -65,7 +65,7 @@ enum Commands {
         #[arg(short, long)]
         continue_on_error: bool,
         #[cfg(feature = "ocr")]
-        #[arg(short = 'L', long, value_delimiter = ',', default_value = "eng,rus,chi_sim")]
+        #[arg(short = 'L', long, value_delimiter = ',', default_value = "eng")]
         ocr_langs: Vec<String>,
     },
 
@@ -94,13 +94,26 @@ fn parse_ocr_langs(lang_strs: &[String]) -> Vec<OcrLanguage> {
     if langs.is_empty() { vec![OcrLanguage::Eng] } else { langs }
 }
 
+fn default_parallel_jobs() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     let log_level = if cli.verbose { tracing::Level::DEBUG }
         else if cli.quiet { tracing::Level::ERROR }
         else { tracing::Level::INFO };
+
+    #[cfg(feature = "logs")]
     tracing_subscriber::fmt().with_max_level(log_level).with_target(false).init();
+
+    #[cfg(not(feature = "logs"))]
+    {
+        let _ = log_level; // suppress unused variable warning
+    }
 
     if let Err(e) = run_command(cli).await {
         eprintln!("{} {}", "Error:".red().bold(), e);
@@ -269,7 +282,7 @@ async fn do_convert(input: &PathBuf, output: &Option<PathBuf>, optimize_llm: boo
 /// Batch conversion — full build with OCR
 #[cfg(feature = "ocr")]
 async fn do_batch(input: &[PathBuf], output: &PathBuf, jobs: Option<usize>, combined: bool, quiet: bool, ocr_languages: &Vec<OcrLanguage>) -> Result<()> {
-    let parallel_jobs = jobs.unwrap_or_else(num_cpus::get);
+    let parallel_jobs = jobs.unwrap_or_else(default_parallel_jobs);
     if !quiet { println!("{}", "Batch converting documents...".cyan().bold()); println!("  Input:    {} paths", input.len()); println!("  Output:   {}", output.display()); println!("  Parallel: {} jobs", parallel_jobs); println!("  Combined: {}", if combined { "yes" } else { "no" }); println!(); }
     let all_files = collect_files(input);
     let total = all_files.len();
@@ -286,7 +299,7 @@ async fn do_batch(input: &[PathBuf], output: &PathBuf, jobs: Option<usize>, comb
 /// Batch conversion — light build without OCR
 #[cfg(not(feature = "ocr"))]
 async fn do_batch(input: &[PathBuf], output: &PathBuf, jobs: Option<usize>, combined: bool, quiet: bool) -> Result<()> {
-    let parallel_jobs = jobs.unwrap_or_else(num_cpus::get);
+    let parallel_jobs = jobs.unwrap_or_else(default_parallel_jobs);
     if !quiet { println!("{}", "Batch converting documents...".cyan().bold()); println!("  Input:    {} paths", input.len()); println!("  Output:   {}", output.display()); println!("  Parallel: {} jobs", parallel_jobs); println!("  Combined: {}", if combined { "yes" } else { "no" }); println!(); }
     let all_files = collect_files(input);
     let total = all_files.len();

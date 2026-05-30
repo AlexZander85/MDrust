@@ -25,6 +25,7 @@ desktop.ini
 
 # Downloaded artifacts
 /artifacts/
+/artifacts2/
 
 # Logs
 *.log

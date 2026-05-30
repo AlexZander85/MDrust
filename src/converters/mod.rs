@@ -15,11 +15,10 @@ pub mod image_ocr;
 
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Metadata about a converted document
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DocumentMetadata {
     pub title: Option<String>,
     pub author: Option<String>,
@@ -45,7 +44,7 @@ impl Default for DocumentMetadata {
 }
 
 /// A single output chunk (page, slide, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OutputChunk {
     pub page_number: usize,
     pub data: String,
@@ -53,7 +52,8 @@ pub struct OutputChunk {
 }
 
 /// Result of a document conversion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[must_use = "ConversionResult must be saved or written"]
 pub struct ConversionResult {
     pub content: Vec<OutputChunk>,
     pub metadata: DocumentMetadata,
@@ -61,7 +61,7 @@ pub struct ConversionResult {
 }
 
 impl ConversionResult {
-    /// Create a new conversion result from a single markdown string
+    #[inline]
     pub fn from_markdown(markdown: String, metadata: DocumentMetadata) -> Self {
         let word_count = markdown.split_whitespace().count();
         Self {
@@ -78,7 +78,20 @@ impl ConversionResult {
         }
     }
 
-    /// Create a conversion result from multiple pages
+    /// Create result WITHOUT recounting words (caller already counted)
+    #[inline]
+    pub fn from_markdown_no_recount(markdown: String, metadata: DocumentMetadata) -> Self {
+        Self {
+            content: vec![OutputChunk {
+                page_number: 1,
+                data: markdown,
+                label: "Full document".to_string(),
+            }],
+            metadata,
+            output_format: OutputFormat::default(),
+        }
+    }
+
     pub fn from_pages(pages: Vec<(String, String)>, metadata: DocumentMetadata) -> Self {
         let total_words: usize = pages.iter().map(|(p, _)| p.split_whitespace().count()).sum();
         let page_count = pages.len();
@@ -103,23 +116,25 @@ impl ConversionResult {
         }
     }
 
-    /// Get the full markdown text (all pages combined)
+    /// Get the full markdown text (all pages combined) with pre-allocated capacity
     pub fn full_markdown(&self) -> String {
-        self.content
-            .iter()
-            .map(|c| c.data.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n")
+        const SEP: &str = "\n\n---\n\n";
+        let total: usize = self.content.iter().map(|c| c.data.len()).sum::<usize>()
+            + SEP.len() * self.content.len().saturating_sub(1);
+        let mut out = String::with_capacity(total);
+        for (i, chunk) in self.content.iter().enumerate() {
+            if i > 0 { out.push_str(SEP); }
+            out.push_str(&chunk.data);
+        }
+        out
     }
 
-    /// Save all content to a single file
     pub async fn save_to_file(&self, path: &Path) -> Result<()> {
         let content = self.full_markdown();
         tokio::fs::write(path, content).await?;
         Ok(())
     }
 
-    /// Save each chunk as a separate file in the given directory
     pub async fn save_to_directory(&self, dir: &Path) -> Result<Vec<std::path::PathBuf>> {
         tokio::fs::create_dir_all(dir).await?;
         let mut saved = Vec::new();
@@ -136,64 +151,85 @@ impl ConversionResult {
 /// Trait for document converters
 #[async_trait::async_trait]
 pub trait DocumentConverter: Send + Sync {
-    /// Get the input format this converter handles
     fn format(&self) -> InputFormat;
-
-    /// Convert a document at the given path
-    async fn convert(
-        &self,
-        path: &Path,
-        output_format: &OutputFormat,
-    ) -> Result<ConversionResult>;
-
-    /// Check if this converter can handle the given file
+    async fn convert(&self, path: &Path, output_format: &OutputFormat) -> Result<ConversionResult>;
     fn can_convert(&self, path: &Path) -> bool {
         crate::utils::detect_format(path) == self.format()
     }
 }
 
-/// Factory function: get the appropriate converter for a file
-///
-/// When the `ocr` feature is enabled, image files will be handled by OCR.
-/// When the `ocr` feature is disabled, image files return None (unsupported).
-pub fn get_converter(path: &Path) -> Option<Box<dyn DocumentConverter>> {
-    match crate::utils::detect_format(path) {
-        InputFormat::Pdf => Some(Box::new(pdf::PdfConverter::new())),
-        InputFormat::Docx => Some(Box::new(docx::DocxConverter::new())),
-        InputFormat::Xlsx => Some(Box::new(xlsx::XlsxConverter::new())),
-        InputFormat::Pptx => Some(Box::new(pptx::PptxConverter::new())),
-        InputFormat::Html => Some(Box::new(html::HtmlConverter::new())),
-        InputFormat::Xml => Some(Box::new(html::XmlConverter::new())),
-        InputFormat::Txt | InputFormat::Markdown => Some(Box::new(txt::TxtConverter::new())),
-        InputFormat::Csv | InputFormat::Tsv => Some(Box::new(csv::CsvConverter::new())),
-        InputFormat::Rtf | InputFormat::Odt => Some(Box::new(txt::TxtConverter::new())),
-        InputFormat::Json => Some(Box::new(json_conv::JsonConverter::new())),
-        InputFormat::Zip => Some(Box::new(zip_conv::ZipConverter::new())),
-        #[cfg(feature = "ocr")]
-        InputFormat::Image => Some(Box::new(image_ocr::ImageOcrConverter::with_default_languages())),
-        #[cfg(not(feature = "ocr"))]
-        InputFormat::Image => None,
-        InputFormat::Unknown => None,
+/// Enum dispatch — avoids heap allocation for converters (all are ZSTs)
+pub enum Converter {
+    Pdf(pdf::PdfConverter),
+    Docx(docx::DocxConverter),
+    Xlsx(xlsx::XlsxConverter),
+    Pptx(pptx::PptxConverter),
+    Html(html::HtmlConverter),
+    Xml(html::XmlConverter),
+    Txt(txt::TxtConverter),
+    Csv(csv::CsvConverter),
+    Json(json_conv::JsonConverter),
+    Zip(zip_conv::ZipConverter),
+    #[cfg(feature = "ocr")]
+    Image(image_ocr::ImageOcrConverter),
+}
+
+impl Converter {
+    pub async fn convert(&self, path: &Path, fmt: &OutputFormat) -> Result<ConversionResult> {
+        match self {
+            Converter::Pdf(c) => c.convert(path, fmt).await,
+            Converter::Docx(c) => c.convert(path, fmt).await,
+            Converter::Xlsx(c) => c.convert(path, fmt).await,
+            Converter::Pptx(c) => c.convert(path, fmt).await,
+            Converter::Html(c) => c.convert(path, fmt).await,
+            Converter::Xml(c) => c.convert(path, fmt).await,
+            Converter::Txt(c) => c.convert(path, fmt).await,
+            Converter::Csv(c) => c.convert(path, fmt).await,
+            Converter::Json(c) => c.convert(path, fmt).await,
+            Converter::Zip(c) => c.convert(path, fmt).await,
+            #[cfg(feature = "ocr")]
+            Converter::Image(c) => c.convert(path, fmt).await,
+        }
     }
 }
 
-/// Factory function: get the appropriate converter for a file with specified OCR languages.
-/// Only available when the `ocr` feature is enabled.
+/// Factory function: get the appropriate converter for a file
+pub fn get_converter(path: &Path) -> Option<Converter> {
+    use InputFormat::*;
+    Some(match crate::utils::detect_format(path) {
+        Pdf => Converter::Pdf(pdf::PdfConverter::new()),
+        Docx => Converter::Docx(docx::DocxConverter::new()),
+        Xlsx => Converter::Xlsx(xlsx::XlsxConverter::new()),
+        Pptx => Converter::Pptx(pptx::PptxConverter::new()),
+        Html => Converter::Html(html::HtmlConverter::new()),
+        Xml => Converter::Xml(html::XmlConverter::new()),
+        Txt | Markdown | Rtf | Odt => Converter::Txt(txt::TxtConverter::new()),
+        Csv | Tsv => Converter::Csv(csv::CsvConverter::new()),
+        Json => Converter::Json(json_conv::JsonConverter::new()),
+        Zip => Converter::Zip(zip_conv::ZipConverter::new()),
+        #[cfg(feature = "ocr")]
+        Image => Converter::Image(image_ocr::ImageOcrConverter::with_default_languages()),
+        #[cfg(not(feature = "ocr"))]
+        Image => return None,
+        Unknown => return None,
+    })
+}
+
 #[cfg(feature = "ocr")]
-pub fn get_converter_with_ocr(path: &Path, ocr_languages: &[crate::ocr::OcrLanguage]) -> Option<Box<dyn DocumentConverter>> {
-    match crate::utils::detect_format(path) {
-        InputFormat::Pdf => Some(Box::new(pdf::PdfConverter::new())),
-        InputFormat::Docx => Some(Box::new(docx::DocxConverter::new())),
-        InputFormat::Xlsx => Some(Box::new(xlsx::XlsxConverter::new())),
-        InputFormat::Pptx => Some(Box::new(pptx::PptxConverter::new())),
-        InputFormat::Html => Some(Box::new(html::HtmlConverter::new())),
-        InputFormat::Xml => Some(Box::new(html::XmlConverter::new())),
-        InputFormat::Txt | InputFormat::Markdown => Some(Box::new(txt::TxtConverter::new())),
-        InputFormat::Csv | InputFormat::Tsv => Some(Box::new(csv::CsvConverter::new())),
-        InputFormat::Rtf | InputFormat::Odt => Some(Box::new(txt::TxtConverter::new())),
-        InputFormat::Json => Some(Box::new(json_conv::JsonConverter::new())),
-        InputFormat::Zip => Some(Box::new(zip_conv::ZipConverter::new())),
-        InputFormat::Image => Some(Box::new(image_ocr::ImageOcrConverter::new(ocr_languages.to_vec()))),
-        InputFormat::Unknown => None,
-    }
+pub fn get_converter_with_ocr(path: &Path, ocr_languages: &[crate::ocr::OcrLanguage]) -> Option<Converter> {
+    use InputFormat::*;
+    Some(match crate::utils::detect_format(path) {
+        Pdf => Converter::Pdf(pdf::PdfConverter::new()),
+        Docx => Converter::Docx(docx::DocxConverter::new()),
+        Xlsx => Converter::Xlsx(xlsx::XlsxConverter::new()),
+        Pptx => Converter::Pptx(pptx::PptxConverter::new()),
+        Html => Converter::Html(html::HtmlConverter::new()),
+        Xml => Converter::Xml(html::XmlConverter::new()),
+        Txt | Markdown | Rtf | Odt => Converter::Txt(txt::TxtConverter::new()),
+        Csv | Tsv => Converter::Csv(csv::CsvConverter::new()),
+        Json => Converter::Json(json_conv::JsonConverter::new()),
+        Zip => Converter::Zip(zip_conv::ZipConverter::new()),
+        Image => Converter::Image(image_ocr::ImageOcrConverter::new(ocr_languages.to_vec())),
+        Unknown => return None,
+    })
 }

@@ -20,3 +20,6 @@ pub mod ocr;
 
 #[cfg(feature = "preview")]
 pub mod preview;
+
+#[cfg(feature = "gui")]
+pub mod gui;

@@ -1,12 +1,11 @@
 //! Multi-threaded batch processor for document conversion
 //!
 //! Uses tokio for async I/O and a Semaphore for concurrency control,
-//! similar to the transmutation project's architecture.
+//! with FuturesUnordered for streaming results (lower memory than join_all).
 
 use crate::converters::ConversionResult;
 use crate::utils::{OutputFormat, collect_files};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -17,26 +16,39 @@ use tokio::sync::Semaphore;
 use crate::ocr::OcrLanguage;
 
 /// Status of a single file in the batch
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FileStatus {
     Pending,
-    Converting,
+    Converting(f32),
     Completed,
     Failed(String),
     Skipped(String),
 }
 
+impl FileStatus {
+    pub fn label(&self) -> &str {
+        match self {
+            FileStatus::Pending => "Pending",
+            FileStatus::Converting(_) => "Converting",
+            FileStatus::Completed => "Done",
+            FileStatus::Failed(_) => "Failed",
+            FileStatus::Skipped(_) => "Skipped",
+        }
+    }
+}
+
 /// Information about a file in the batch queue
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub status: FileStatus,
     pub file_size: u64,
     pub format: String,
+    pub name: String,
 }
 
 /// Result of a batch conversion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct BatchResult {
     pub successes: Vec<(PathBuf, ConversionResult)>,
     pub failures: Vec<(PathBuf, String)>,
@@ -98,15 +110,11 @@ impl BatchResult {
     }
 }
 
-/// Progress callback type
-pub type ProgressCallback = Box<dyn Fn(usize, usize, &PathBuf) + Send + Sync>;
-
 /// Multi-threaded batch processor
 pub struct BatchProcessor {
     files: Vec<FileEntry>,
     output_format: OutputFormat,
     parallel_jobs: usize,
-    progress_callback: Option<ProgressCallback>,
     #[cfg(feature = "ocr")]
     ocr_languages: Vec<OcrLanguage>,
 }
@@ -117,10 +125,11 @@ impl BatchProcessor {
         Self {
             files: Vec::new(),
             output_format: OutputFormat::default(),
-            parallel_jobs: num_cpus::get(),
-            progress_callback: None,
+            parallel_jobs: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4),
             #[cfg(feature = "ocr")]
-            ocr_languages: vec![OcrLanguage::Eng, OcrLanguage::Rus, OcrLanguage::ChiSim],
+            ocr_languages: vec![OcrLanguage::Eng],
         }
     }
 
@@ -130,11 +139,17 @@ impl BatchProcessor {
         for path in collected {
             let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             let format = crate::utils::detect_format(&path);
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_string();
             self.files.push(FileEntry {
                 path,
                 status: FileStatus::Pending,
                 file_size,
                 format: format.to_string(),
+                name,
             });
         }
         self
@@ -156,12 +171,6 @@ impl BatchProcessor {
     #[cfg(feature = "ocr")]
     pub fn ocr_languages(mut self, languages: Vec<OcrLanguage>) -> Self {
         self.ocr_languages = languages;
-        self
-    }
-
-    /// Set progress callback
-    pub fn on_progress(mut self, callback: ProgressCallback) -> Self {
-        self.progress_callback = Some(callback);
         self
     }
 
@@ -200,7 +209,10 @@ impl BatchProcessor {
         let output_format = Arc::new(self.output_format);
 
         let file_paths: Vec<PathBuf> = self.files.iter().map(|f| f.path.clone()).collect();
-        let mut tasks = Vec::new();
+
+        use futures_util::stream::{FuturesUnordered, StreamExt};
+
+        let mut tasks = FuturesUnordered::new();
 
         for file_path in file_paths {
             let sem = semaphore.clone();
@@ -211,7 +223,7 @@ impl BatchProcessor {
             let ocr_langs = self.ocr_languages.clone();
 
             let task = tokio::spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
+                let _permit = sem.acquire().await.ok()?;
 
                 #[cfg(feature = "ocr")]
                 let result = convert_file(&file_path, &out_fmt, &ocr_langs).await;
@@ -219,33 +231,34 @@ impl BatchProcessor {
                 #[cfg(not(feature = "ocr"))]
                 let result = convert_file(&file_path, &out_fmt).await;
 
-                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                (file_path, result, done)
+                let _done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                Some((file_path, result))
             });
 
             tasks.push(task);
         }
 
-        let results = futures::future::join_all(tasks).await;
-
-        let total_time = start_time.elapsed();
         let mut successes = Vec::new();
         let mut failures = Vec::new();
 
-        for task_result in results {
-            match task_result {
-                Ok((path, Ok(conversion), _done)) => {
+        while let Some(joined) = tasks.next().await {
+            match joined {
+                Ok(Some((path, Ok(conversion)))) => {
                     successes.push((path, conversion));
                 }
-                Ok((path, Err(e), _done)) => {
+                Ok(Some((path, Err(e)))) => {
                     tracing::warn!("Failed to convert {}: {}", path.display(), e);
                     failures.push((path, e.to_string()));
                 }
+                Ok(None) => {}
                 Err(join_error) => {
                     tracing::error!("Task join error: {}", join_error);
+                    failures.push((PathBuf::new(), join_error.to_string()));
                 }
             }
         }
+
+        let total_time = start_time.elapsed();
 
         let batch_result = BatchResult {
             successes,

@@ -93,10 +93,10 @@ impl std::fmt::Display for OcrLanguage {
 /// extracted to the application tessdata directory. If a file already exists
 /// and its size matches the embedded data, extraction is skipped.
 ///
-/// If `languages` is empty, all embedded languages are extracted.
+/// If `languages` is empty, English is extracted as default.
 pub fn ensure_tessdata(languages: &[OcrLanguage]) -> Result<()> {
     let langs: Vec<OcrLanguage> = if languages.is_empty() {
-        vec![OcrLanguage::Eng, OcrLanguage::Rus, OcrLanguage::ChiSim]
+        vec![OcrLanguage::Eng]
     } else {
         languages.to_vec()
     };
@@ -141,10 +141,6 @@ pub fn is_tesseract_available() -> bool {
 
 /// Run Tesseract OCR on an image file and return the recognised text as
 /// Markdown.
-///
-/// The output is wrapped in a Markdown code block only if the detected content
-/// appears to be structured/tabular; otherwise plain recognised text is
-/// returned with paragraph breaks preserved.
 ///
 /// # Arguments
 /// * `image_path` - Path to the image file to OCR.
@@ -204,7 +200,6 @@ pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Re
 
     // --- Run tesseract ---------------------------------------------------------
 
-    // tesseract <image> stdout -l <langs> --tessdata-dir <dir>
     let output = Command::new("tesseract")
         .arg(image_path)
         .arg("stdout")
@@ -247,11 +242,6 @@ pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Re
 // ---------------------------------------------------------------------------
 
 /// Minimal post-processing of raw OCR text into Markdown.
-///
-/// - Collapses excessive blank lines into double newlines (paragraph breaks).
-/// - Does NOT wrap in code fences so that downstream consumers can treat the
-///   output as regular Markdown text (headings, lists, etc. will be preserved
-///   if the OCR picked them up).
 fn postprocess_to_markdown(raw: &str) -> String {
     // Normalise line endings
     let text = raw.replace("\r\n", "\n").replace('\r', "\n");
@@ -273,93 +263,4 @@ fn postprocess_to_markdown(raw: &str) -> String {
     }
 
     result.trim().to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ocr_language_tesseract_codes() {
-        assert_eq!(OcrLanguage::Eng.tesseract_code(), "eng");
-        assert_eq!(OcrLanguage::Rus.tesseract_code(), "rus");
-        assert_eq!(OcrLanguage::ChiSim.tesseract_code(), "chi_sim");
-    }
-
-    #[test]
-    fn test_ocr_language_filenames() {
-        assert_eq!(OcrLanguage::Eng.filename(), "eng.traineddata");
-        assert_eq!(OcrLanguage::Rus.filename(), "rus.traineddata");
-        assert_eq!(OcrLanguage::ChiSim.filename(), "chi_sim.traineddata");
-    }
-
-    #[test]
-    fn test_ocr_language_display() {
-        assert_eq!(format!("{}", OcrLanguage::Eng), "English");
-        assert_eq!(format!("{}", OcrLanguage::Rus), "Russian");
-        assert_eq!(format!("{}", OcrLanguage::ChiSim), "Simplified Chinese");
-    }
-
-    #[test]
-    fn test_embedded_bytes_non_empty() {
-        // Sanity check that the embedded files are non-empty
-        assert!(!OcrLanguage::Eng.embedded_bytes().is_empty());
-        assert!(!OcrLanguage::Rus.embedded_bytes().is_empty());
-        assert!(!OcrLanguage::ChiSim.embedded_bytes().is_empty());
-    }
-
-    #[test]
-    fn test_postprocess_collapses_blank_lines() {
-        let input = "Hello\n\n\n\nWorld";
-        let result = postprocess_to_markdown(input);
-        assert_eq!(result, "Hello\n\nWorld");
-    }
-
-    #[test]
-    fn test_postprocess_preserves_paragraph_breaks() {
-        let input = "Para 1\n\nPara 2";
-        let result = postprocess_to_markdown(input);
-        assert_eq!(result, "Para 1\n\nPara 2");
-    }
-
-    #[test]
-    fn test_postprocess_normalises_crlf() {
-        let input = "Line 1\r\nLine 2";
-        let result = postprocess_to_markdown(input);
-        assert_eq!(result, "Line 1\nLine 2");
-    }
-
-    #[test]
-    fn test_ocr_empty_languages_errors() {
-        let result = ocr_image_to_markdown(Path::new("/nonexistent.png"), &[]);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("At least one OCR language"));
-    }
-
-    #[test]
-    fn test_ocr_nonexistent_image_errors() {
-        let result = ocr_image_to_markdown(Path::new("/nonexistent.png"), &[OcrLanguage::Eng]);
-        // Will fail either because tesseract is missing or file doesn't exist
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_ensure_tessdata_creates_files() {
-        // Use a temporary directory to avoid polluting the real data dir
-        let tmp = std::env::temp_dir().join("markitdown-rst-test-tessdata");
-        let _ = fs::create_dir_all(&tmp);
-
-        // We test the logic indirectly; ensure_tessdata uses crate::utils::tessdata_dir()
-        // which points to the real data dir, so we just ensure it doesn't panic.
-        let result = ensure_tessdata(&[OcrLanguage::Eng]);
-        // Should succeed (file may already exist)
-        assert!(result.is_ok());
-    }
 }

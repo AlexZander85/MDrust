@@ -3,7 +3,7 @@
 //! Converts images (JPG, PNG, TIFF, BMP, GIF, WEBP) to Markdown via OCR.
 //! Requires the Tesseract CLI to be installed on the system.
 
-use super::{ConversionResult, DocumentConverter, DocumentMetadata};
+use super::{ConversionResult, Converter, DocumentConverter, DocumentMetadata};
 use crate::ocr::{self, OcrLanguage};
 use crate::utils::{InputFormat, OutputFormat};
 use anyhow::Result;
@@ -25,8 +25,9 @@ impl ImageOcrConverter {
         Self { languages: langs }
     }
 
+    /// Default: English only. Users can enable rus/chi_sim in the UI.
     pub fn with_default_languages() -> Self {
-        Self::new(vec![OcrLanguage::Eng, OcrLanguage::Rus, OcrLanguage::ChiSim])
+        Self::new(vec![OcrLanguage::Eng])
     }
 }
 
@@ -93,5 +94,5 @@ fn extract_image_ocr_to_markdown(
         file_size_bytes: file_size,
     };
 
-    Ok(ConversionResult::from_markdown(markdown, metadata))
+    Ok(ConversionResult::from_markdown_no_recount(markdown, metadata))
 }

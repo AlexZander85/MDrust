@@ -1,33 +1,32 @@
-//! MarkItDown-RST — Multi-threaded Document-to-Markdown Converter
-//!
-//! A Rust rewrite of markitdown-gui with:
-//! - Multi-threaded batch processing (tokio + semaphore)
-//! - Optional Tesseract OCR with embedded tessdata (eng/rus/chi_sim) — `ocr` feature
-//! - Optional Markdown viewer/editor with highlight.js, KaTeX, Mermaid — `preview` feature
-//! - Multilingual UI (RU/EN/ZH)
-//! - All in one compact binary
+use mimalloc::MiMalloc;
 
-pub mod batch;
-pub mod converters;
-pub mod gui;
-pub mod i18n;
-pub mod utils;
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
-#[cfg(feature = "ocr")]
-pub mod ocr;
-
-#[cfg(feature = "preview")]
-pub mod preview;
-
+/// MarkItDown-RST — Multi-threaded Document-to-Markdown Converter
 fn main() -> eframe::Result<()> {
-    // Check if CLI mode is requested
-    let args: Vec<String> = std::env::args().collect();
+    #[cfg(feature = "logs")]
+    {
+        use tracing_subscriber::EnvFilter;
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env())
+            .init();
+    }
 
+    let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && (args[1] == "--cli" || args.contains(&"--cli".to_string())) {
         println!("Use markitdown-cli binary for command-line mode.");
         std::process::exit(0);
     }
 
-    // Run GUI
-    gui::run_gui()
+    #[cfg(feature = "gui")]
+    {
+        markitdown_rst::gui::run_gui()
+    }
+
+    #[cfg(not(feature = "gui"))]
+    {
+        eprintln!("GUI not available. Use markitdown-cli for command-line mode.");
+        std::process::exit(1);
+    }
 }
