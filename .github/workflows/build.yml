@@ -1,20 +1,75 @@
 name: Build Apps
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  release:
-    name: Build for ${{ matrix.os }}
+  build:
+    name: Build ${{ matrix.edition }} for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # ── Full edition (GUI + OCR + Preview) ──
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            edition: full
+            features: ""
+            bin_name: markitdown-rst
+            cli_bin: markitdown-cli
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            edition: full
+            features: ""
+            bin_name: markitdown-rst
+            cli_bin: markitdown-cli
           - os: macos-latest
             target: x86_64-apple-darwin
+            edition: full
+            features: ""
+            bin_name: markitdown-rst
+            cli_bin: markitdown-cli
+          # ── Light edition (GUI, no OCR, no Preview) ──
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            edition: light
+            features: "--no-default-features --features gui"
+            bin_name: markitdown-rst
+            cli_bin: markitdown-cli
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            edition: light
+            features: "--no-default-features --features gui"
+            bin_name: markitdown-rst
+            cli_bin: markitdown-cli
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            edition: light
+            features: "--no-default-features --features gui"
+            bin_name: markitdown-rst
+            cli_bin: markitdown-cli
+          # ── CLI-only edition (no GUI, with OCR) ──
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            edition: cli-only
+            features: "--no-default-features --features cli-only"
+            bin_name: ""
+            cli_bin: markitdown-cli
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            edition: cli-only
+            features: "--no-default-features --features cli-only"
+            bin_name: ""
+            cli_bin: markitdown-cli
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            edition: cli-only
+            features: "--no-default-features --features cli-only"
+            bin_name: ""
+            cli_bin: markitdown-cli
 
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +78,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libx11-xcb-dev libxrandr-dev libxi-dev libxcursor-dev libxdamage-dev libxfixes-dev libxinerama-dev libwayland-dev libgbm-dev libegl-dev libclang-dev libspeechd-dev libtesseract-dev libleptonica-dev
+          sudo apt-get install -y \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libx11-dev libx11-xcb-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxdamage-dev libxfixes-dev libxinerama-dev libwayland-dev \
+            libgbm-dev libegl-dev libclang-dev libspeechd-dev \
+            libtesseract-dev libleptonica-dev
 
       - name: Install macOS dependencies
         if: matrix.os == 'macos-latest'
@@ -41,41 +101,101 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ matrix.os }}-cargo-
+          key: ${{ matrix.os }}-${{ matrix.edition }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-${{ matrix.edition }}-cargo-
 
-      - name: Build GUI
-        run: cargo build --release --target ${{ matrix.target }}
+      # ── Build ──
+      - name: Build GUI binary (Full / Light)
+        if: matrix.bin_name != ''
+        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.features }}
 
-      - name: Build CLI
-        run: cargo build --release --bin markitdown-cli --target ${{ matrix.target }}
+      - name: Build CLI binary (CLI-only)
+        if: matrix.edition == 'cli-only'
+        run: cargo build --release --bin markitdown-cli --target ${{ matrix.target }} ${{ matrix.features }}
 
+      # ── Prepare artifacts ──
+      # OS-specific naming: markitdown-rst-{edition}-{os}-x64[.exe]
       - name: Prepare artifacts (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          copy target/${{ matrix.target }}/release/markitdown-rs.exe markitdown-gui-windows-x64.exe
-          copy target/${{ matrix.target }}/release/markitdown-cli.exe markitdown-cli-windows-x64.exe
+          $target = "${{ matrix.target }}"
+          $edition = "${{ matrix.edition }}"
+
+          if ("${{ matrix.bin_name }}" -ne "") {
+            $src = "target/$target/release/${{ matrix.bin_name }}.exe"
+            $dst = "markitdown-rst-${edition}-windows-x64.exe"
+            Copy-Item $src $dst
+            Write-Host "GUI artifact: $dst ($('{0:N0}' -f (Get-Item $dst).Length) bytes)"
+          }
+
+          if ("${{ matrix.cli_bin }}" -ne "" -and $edition -ne "cli-only") {
+            $src = "target/$target/release/${{ matrix.cli_bin }}.exe"
+            $dst = "markitdown-cli-${edition}-windows-x64.exe"
+            Copy-Item $src $dst
+            Write-Host "CLI artifact: $dst ($('{0:N0}' -f (Get-Item $dst).Length) bytes)"
+          }
+
+          if ($edition -eq "cli-only") {
+            $src = "target/$target/release/${{ matrix.cli_bin }}.exe"
+            $dst = "markitdown-cli-only-windows-x64.exe"
+            Copy-Item $src $dst
+            Write-Host "CLI-only artifact: $dst ($('{0:N0}' -f (Get-Item $dst).Length) bytes)"
+          }
 
       - name: Prepare artifacts (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cp target/${{ matrix.target }}/release/markitdown-rs markitdown-gui-linux-x64
-          cp target/${{ matrix.target }}/release/markitdown-cli markitdown-cli-linux-x64
+          TARGET="${{ matrix.target }}"
+          EDITION="${{ matrix.edition }}"
+
+          if [ -n "${{ matrix.bin_name }}" ]; then
+            cp "target/$TARGET/release/${{ matrix.bin_name }}" "markitdown-rst-${EDITION}-linux-x64"
+            chmod +x "markitdown-rst-${EDITION}-linux-x64"
+            echo "GUI artifact: markitdown-rst-${EDITION}-linux-x64 ($(stat -c%s markitdown-rst-${EDITION}-linux-x64) bytes)"
+          fi
+
+          if [ -n "${{ matrix.cli_bin }}" ] && [ "$EDITION" != "cli-only" ]; then
+            cp "target/$TARGET/release/${{ matrix.cli_bin }}" "markitdown-cli-${EDITION}-linux-x64"
+            chmod +x "markitdown-cli-${EDITION}-linux-x64"
+            echo "CLI artifact: markitdown-cli-${EDITION}-linux-x64 ($(stat -c%s markitdown-cli-${EDITION}-linux-x64) bytes)"
+          fi
+
+          if [ "$EDITION" = "cli-only" ]; then
+            cp "target/$TARGET/release/${{ matrix.cli_bin }}" "markitdown-cli-only-linux-x64"
+            chmod +x "markitdown-cli-only-linux-x64"
+            echo "CLI-only artifact: markitdown-cli-only-linux-x64 ($(stat -c%s markitdown-cli-only-linux-x64) bytes)"
+          fi
 
       - name: Prepare artifacts (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          cp target/${{ matrix.target }}/release/markitdown-rs markitdown-gui-macos-x64
-          cp target/${{ matrix.target }}/release/markitdown-cli markitdown-cli-macos-x64
+          TARGET="${{ matrix.target }}"
+          EDITION="${{ matrix.edition }}"
 
-      - name: Upload GUI Artifact
+          if [ -n "${{ matrix.bin_name }}" ]; then
+            cp "target/$TARGET/release/${{ matrix.bin_name }}" "markitdown-rst-${EDITION}-macos-x64"
+            chmod +x "markitdown-rst-${EDITION}-macos-x64"
+            echo "GUI artifact: markitdown-rst-${EDITION}-macos-x64 ($(stat -f%z markitdown-rst-${EDITION}-macos-x64) bytes)"
+          fi
+
+          if [ -n "${{ matrix.cli_bin }}" ] && [ "$EDITION" != "cli-only" ]; then
+            cp "target/$TARGET/release/${{ matrix.cli_bin }}" "markitdown-cli-${EDITION}-macos-x64"
+            chmod +x "markitdown-cli-${EDITION}-macos-x64"
+            echo "CLI artifact: markitdown-cli-${EDITION}-macos-x64 ($(stat -f%z markitdown-cli-${EDITION}-macos-x64) bytes)"
+          fi
+
+          if [ "$EDITION" = "cli-only" ]; then
+            cp "target/$TARGET/release/${{ matrix.cli_bin }}" "markitdown-cli-only-macos-x64"
+            chmod +x "markitdown-cli-only-macos-x64"
+            echo "CLI-only artifact: markitdown-cli-only-macos-x64 ($(stat -f%z markitdown-cli-only-macos-x64) bytes)"
+          fi
+
+      # ── Upload ──
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: markitdown-gui-${{ matrix.target }}
-          path: markitdown-gui-*
-
-      - name: Upload CLI Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: markitdown-cli-${{ matrix.target }}
-          path: markitdown-cli-*
+          name: markitdown-${{ matrix.edition }}-${{ matrix.target }}
+          path: |
+            markitdown-rst-*
+            markitdown-cli-*
