@@ -1,9 +1,13 @@
-name: Build Apps
+name: Build & Release
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -114,7 +118,6 @@ jobs:
         run: cargo build --release --bin markitdown-cli --target ${{ matrix.target }} ${{ matrix.features }}
 
       # ── Prepare artifacts ──
-      # OS-specific naming: markitdown-rst-{edition}-{os}-x64[.exe]
       - name: Prepare artifacts (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -199,3 +202,58 @@ jobs:
           path: |
             markitdown-rst-*
             markitdown-cli-*
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: find artifacts/ -type f | sort
+
+      - name: Create release archive (Linux)
+        run: |
+          mkdir -p release-assets
+          cd artifacts
+
+          # Create .tar.gz for Linux binaries
+          for f in markitdown-*-linux-x64 markitdown-cli-*-linux-x64; do
+            if [ -f "$f" ]; then
+              tar czf "../release-assets/${f}.tar.gz" "$f"
+              echo "Packaged: ${f}.tar.gz"
+            fi
+          done
+
+          # Copy Windows .exe as-is
+          for f in markitdown-*-windows-x64.exe markitdown-cli-*-windows-x64.exe; do
+            if [ -f "$f" ]; then
+              cp "$f" "../release-assets/$f"
+              echo "Copied: $f"
+            fi
+          done
+
+          # Create .tar.gz for macOS binaries
+          for f in markitdown-*-macos-x64 markitdown-cli-*-macos-x64; do
+            if [ -f "$f" ]; then
+              tar czf "../release-assets/${f}.tar.gz" "$f"
+              echo "Packaged: ${f}.tar.gz"
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          body_path: RELEASE_NOTES.md
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
