@@ -4,7 +4,7 @@
 //! Supports: headings, paragraphs, bold, italic, strikethrough, code (inline + blocks),
 //! lists (ordered + unordered), tables, links, horizontal rules, blockquotes.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// Convert Markdown text to a DOCX byte vector.
@@ -22,7 +22,8 @@ pub fn markdown_to_docx(markdown: &str, title: Option<&str>) -> Result<Vec<u8>> 
     let doc = DocxBuilder::new(title).build(&events)?;
 
     let mut buf = std::io::Cursor::new(Vec::new());
-    doc.write(&mut buf)
+    doc.build()
+        .pack(&mut buf)
         .map_err(|e| anyhow::anyhow!("Failed to write DOCX: {e}"))?;
 
     Ok(buf.into_inner())
@@ -39,7 +40,8 @@ struct DocxBuilder {
     italic: bool,
     /// Whether we're inside a strikethrough context
     strikethrough: bool,
-    /// Whether we're inside a code context
+    /// Whether we're inside a code context (not used for Event::Code,
+    /// but kept for potential future tag-based code handling)
     code: bool,
     /// Accumulated paragraphs
     paragraphs: Vec<docx_rs::Paragraph>,
@@ -47,6 +49,14 @@ struct DocxBuilder {
     list_level: u8,
     /// Whether current list is ordered
     list_ordered: bool,
+}
+
+/// Helper to create a Courier New RunFonts
+fn courier_fonts() -> docx_rs::RunFonts {
+    docx_rs::RunFonts::new()
+        .ascii("Courier New")
+        .hi_ansi("Courier New")
+        .cs("Courier New")
 }
 
 impl DocxBuilder {
@@ -58,7 +68,11 @@ impl DocxBuilder {
             paragraphs.push(
                 docx_rs::Paragraph::new()
                     .add_run(docx_rs::Run::new().add_text(t).size(56).bold())
-                    .spacing_after(200),
+                    .line_spacing(
+                        docx_rs::LineSpacing::new()
+                            .line_rule(docx_rs::LineSpacingType::Auto)
+                            .after(200),
+                    ),
             );
         }
 
@@ -97,17 +111,22 @@ impl DocxBuilder {
                             for run in runs {
                                 para = para.add_run(run.size(heading_size).bold());
                             }
-                            self.paragraphs.push(para.spacing_after(160));
+                            self.paragraphs.push(
+                                para.line_spacing(
+                                    docx_rs::LineSpacing::new()
+                                        .line_rule(docx_rs::LineSpacingType::Auto)
+                                        .after(160),
+                                ),
+                            );
                             i = end_idx + 1;
                             continue;
                         }
                         Tag::Paragraph => {
                             self.flush_paragraph();
                         }
-                        Tag::Bold => self.bold = true,
-                        Tag::Italic => self.italic = true,
+                        Tag::Strong => self.bold = true,
+                        Tag::Emphasis => self.italic = true,
                         Tag::Strikethrough => self.strikethrough = true,
-                        Tag::Code(_) => self.code = true,
                         Tag::List(number) => {
                             self.list_level += 1;
                             self.list_ordered = number.is_some();
@@ -116,7 +135,7 @@ impl DocxBuilder {
                         Tag::Item => {
                             self.flush_paragraph();
                         }
-                        Tag::BlockQuote => {
+                        Tag::BlockQuote(_) => {
                             // Blockquote: just treat as indented paragraphs
                             self.flush_paragraph();
                         }
@@ -127,24 +146,29 @@ impl DocxBuilder {
                             i = end_idx + 1;
                             continue;
                         }
-                        Tag::Link { dest, .. } => {
+                        Tag::Link { dest_url, .. } => {
                             // We'll add the link text as a run with hyperlink
-                            let _ = dest;
+                            let _ = dest_url;
                             // Just add the text for now — docx-rs hyperlink support is limited
                         }
                         Tag::CodeBlock(lang) => {
                             self.flush_paragraph();
-                            let (code_text, end_idx) = self.collect_code_block(events, i + 1, lang);
+                            let (code_text, end_idx) =
+                                self.collect_code_block(events, i + 1, lang);
                             // Add as a code paragraph with monospace font
                             let run = docx_rs::Run::new()
                                 .add_text(&code_text)
                                 .size(20)
-                                .font("Courier New");
+                                .fonts(courier_fonts());
                             let para = docx_rs::Paragraph::new()
                                 .add_run(run)
-                                .spacing_before(80)
-                                .spacing_after(80)
-                                .indent(docx_rs::Indent::new().left(360));
+                                .line_spacing(
+                                    docx_rs::LineSpacing::new()
+                                        .line_rule(docx_rs::LineSpacingType::Auto)
+                                        .before(80)
+                                        .after(80),
+                                )
+                                .indent(Some(360), None, None, None);
                             self.paragraphs.push(para);
                             i = end_idx + 1;
                             continue;
@@ -157,17 +181,16 @@ impl DocxBuilder {
                         TagEnd::Paragraph => {
                             self.flush_paragraph();
                         }
-                        TagEnd::Bold => self.bold = false,
-                        TagEnd::Italic => self.italic = false,
+                        TagEnd::Strong => self.bold = false,
+                        TagEnd::Emphasis => self.italic = false,
                         TagEnd::Strikethrough => self.strikethrough = false,
-                        TagEnd::Code => self.code = false,
                         TagEnd::List(_) => {
                             self.list_level = self.list_level.saturating_sub(1);
                         }
                         TagEnd::Item => {
                             self.flush_paragraph();
                         }
-                        TagEnd::BlockQuote => {}
+                        TagEnd::BlockQuote(_) => {}
                         TagEnd::Link => {}
                         _ => {}
                     }
@@ -184,20 +207,21 @@ impl DocxBuilder {
                         run = run.strike();
                     }
                     if self.code {
-                        run = run.font("Courier New").size(20);
+                        run = run.fonts(courier_fonts()).size(20);
                     }
                     self.current_runs.push(run);
                 }
                 Event::Code(code) => {
-                    // Inline code
+                    // Inline code — use monospace font
                     let run = docx_rs::Run::new()
                         .add_text(code.as_ref())
-                        .font("Courier New")
+                        .fonts(courier_fonts())
                         .size(20);
                     self.current_runs.push(run);
                 }
                 Event::SoftBreak | Event::HardBreak => {
-                    self.current_runs.push(docx_rs::Run::new().add_break());
+                    self.current_runs
+                        .push(docx_rs::Run::new().add_break(docx_rs::BreakType::TextWrapping));
                 }
                 Event::Rule => {
                     self.flush_paragraph();
@@ -205,8 +229,12 @@ impl DocxBuilder {
                     self.paragraphs.push(
                         docx_rs::Paragraph::new()
                             .add_run(docx_rs::Run::new().add_text("─".repeat(40)))
-                            .spacing_before(120)
-                            .spacing_after(120),
+                            .line_spacing(
+                                docx_rs::LineSpacing::new()
+                                    .line_rule(docx_rs::LineSpacingType::Auto)
+                                    .before(120)
+                                    .after(120),
+                            ),
                     );
                 }
                 Event::Html(html) => {
@@ -245,11 +273,17 @@ impl DocxBuilder {
 
         // Add list indentation
         if self.list_level > 0 {
-            let indent = 360 * self.list_level as usize;
-            para = para.indent(docx_rs::Indent::new().left(indent));
+            let indent = 360 * self.list_level as i32;
+            para = para.indent(Some(indent), None, None, None);
         }
 
-        self.paragraphs.push(para.spacing_after(80));
+        self.paragraphs.push(
+            para.line_spacing(
+                docx_rs::LineSpacing::new()
+                    .line_rule(docx_rs::LineSpacingType::Auto)
+                    .after(80),
+            ),
+        );
     }
 
     /// Collect inline events into runs until the matching End event
@@ -269,15 +303,26 @@ impl DocxBuilder {
                 }
                 Event::Text(text) => {
                     let mut run = docx_rs::Run::new().add_text(text.as_ref());
-                    if self.bold { run = run.bold(); }
-                    if self.italic { run = run.italic(); }
+                    if self.bold {
+                        run = run.bold();
+                    }
+                    if self.italic {
+                        run = run.italic();
+                    }
                     runs.push(run);
                 }
                 Event::Code(code) => {
-                    runs.push(docx_rs::Run::new().add_text(code.as_ref()).font("Courier New").size(20));
+                    runs.push(
+                        docx_rs::Run::new()
+                            .add_text(code.as_ref())
+                            .fonts(courier_fonts())
+                            .size(20),
+                    );
                 }
                 Event::SoftBreak | Event::HardBreak => {
-                    runs.push(docx_rs::Run::new().add_break());
+                    runs.push(
+                        docx_rs::Run::new().add_break(docx_rs::BreakType::TextWrapping),
+                    );
                 }
                 _ => {}
             }
@@ -292,7 +337,7 @@ impl DocxBuilder {
         &self,
         events: &[Event],
         start: usize,
-        _lang: &str,
+        _lang: &pulldown_cmark::CodeBlockKind,
     ) -> (String, usize) {
         let mut code = String::new();
         let mut i = start;
@@ -350,27 +395,28 @@ impl DocxBuilder {
                 }
                 Event::End(TagEnd::Table) => {
                     // Build a simple text representation of the table
-                    let mut table_text = String::new();
-                    for (ri, row) in rows.iter().enumerate() {
-                        for (ci, cell) in row.iter().enumerate() {
-                            if ci > 0 { table_text.push('\t'); }
-                            table_text.push_str(cell);
-                        }
-                        if ri < rows.len() - 1 { table_text.push('\n'); }
-                    }
-
                     // For header row, make it bold
-                    let mut para = docx_rs::Paragraph::new().spacing_before(120).spacing_after(120);
+                    let mut para = docx_rs::Paragraph::new().line_spacing(
+                        docx_rs::LineSpacing::new()
+                            .line_rule(docx_rs::LineSpacingType::Auto)
+                            .before(120)
+                            .after(120),
+                    );
                     if let Some(header_row) = rows.first() {
                         let header_text = header_row.join("\t");
-                        para = para.add_run(docx_rs::Run::new().add_text(&header_text).bold().size(20));
+                        para =
+                            para.add_run(docx_rs::Run::new().add_text(&header_text).bold().size(20));
                         if rows.len() > 1 {
-                            para = para.add_run(docx_rs::Run::new().add_break());
+                            para = para.add_run(
+                                docx_rs::Run::new().add_break(docx_rs::BreakType::TextWrapping),
+                            );
                         }
                     }
                     if rows.len() > 1 {
-                        let body_rows: Vec<String> = rows[1..].iter().map(|r| r.join("\t")).collect();
-                        para = para.add_run(docx_rs::Run::new().add_text(&body_rows.join("\n")).size(20));
+                        let body_rows: Vec<String> =
+                            rows[1..].iter().map(|r| r.join("\t")).collect();
+                        para = para
+                            .add_run(docx_rs::Run::new().add_text(&body_rows.join("\n")).size(20));
                     }
 
                     return (para, i);
