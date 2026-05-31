@@ -81,7 +81,8 @@ dirs = "5.0"
 open = { version = "5.3", optional = true }
 
 # eframe/egui for GUI
-eframe = "0.31"
+# Note: enable both "wgpu" and "glow" features so we can fallback from wgpu to glow renderer
+eframe = { version = "0.31", features = ["wgpu"] }
 egui = "0.31"
 egui_extras = { version = "0.31", default-features = false, features = ["image"] }
 rfd = "0.15"
