@@ -107,7 +107,7 @@ impl MarkItDownApp {
         let output_dir = dirs::download_dir()
             .or_else(|| dirs::home_dir())
             .unwrap_or_default()
-            .join("markitdown-output")
+            .join("mdrust-output")
             .to_string_lossy()
             .to_string();
 
@@ -137,7 +137,9 @@ impl MarkItDownApp {
             last_results: Vec::new(),
             last_selected_preview: 0,
             selected_preview: 0,
-            runtime: Arc::new(Runtime::new().expect("failed to create tokio runtime")),
+            runtime: Arc::new(
+                Runtime::new().expect("MDrust: failed to create async runtime — this usually means the system cannot create threads")
+            ),
             result_rx,
             result_tx,
             output_format: OutputFormat::default(),

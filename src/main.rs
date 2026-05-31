@@ -29,7 +29,7 @@ mod win_msgbox {
 }
 
 /// MDrust — Multi-threaded Document-to-Markdown Converter
-fn main() -> eframe::Result<()> {
+fn main() {
     // On Windows GUI builds, show panics in a message box instead of silently crashing
     // (without windows_subsystem = "windows", the console disappears instantly on panic)
     #[cfg(all(feature = "gui", target_os = "windows"))]
@@ -63,7 +63,29 @@ fn main() -> eframe::Result<()> {
 
     #[cfg(feature = "gui")]
     {
-        mdrust::gui::run_gui()
+        let result = mdrust::gui::run_gui();
+
+        if let Err(e) = result {
+            let err_msg = format!("{e}");
+            eprintln!("MDrust error: {err_msg}");
+
+            // On Windows, show the error in a MessageBox so the user can see it
+            // (without this, errors from eframe are silently lost because there's no console)
+            #[cfg(target_os = "windows")]
+            unsafe {
+                win_msgbox::show_error(
+                    "MDrust — Startup Error",
+                    &format!(
+                        "MDrust failed to start:\n\n{}\n\n\
+                         Possible fixes:\n\
+                         - Update your GPU drivers\n\
+                         - Try the Light edition (lower GPU requirements)\n\
+                         - Report at github.com/AlexZander85/MDrust/issues",
+                        err_msg
+                    ),
+                );
+            }
+        }
     }
 
     #[cfg(not(feature = "gui"))]
