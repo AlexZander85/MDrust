@@ -1,14 +1,13 @@
-## MDrust v1.2.2 — Critical Font Crash Fix
+## MDrust v1.2.3 — Icon Fix, Chinese Font Fix, Theme Fix, OCR Message Fix
 
-This hotfix resolves a fatal startup crash caused by corrupted font files.
+This release fixes multiple UI issues reported after v1.2.2.
 
 ### Bug Fixes
 
-- **Fixed fatal crash: "Error parsing Inter-Bold TTF/OTF font file: InvalidFont"** — The `Inter-Regular.ttf` and `Inter-Bold.ttf` files in the `assets/fonts/` directory were accidentally HTML pages (downloaded from a wrong URL) instead of real TTF font binaries. egui's font parser would panic when trying to parse them, causing the application to crash immediately on startup.
-- **Added font validation** — Font files are now validated for TTF/OTF magic bytes before being passed to egui. If a font file is corrupted or invalid, it is silently skipped with a warning instead of causing a panic. The application will start with egui's built-in fallback fonts.
-- **Fixed output directory name** — Changed `markitdown-output` to `mdrust-output` (leftover from project rename).
-- **Added GPU error fallback** — If the wgpu renderer fails, MDrust now automatically retries with the glow (OpenGL) renderer.
-- **Added error dialog on Windows** — eframe startup errors are now shown in a Windows MessageBox instead of being silently lost.
+- **Fixed squished app icon** — The source icon was 1536×1024 (not square), causing egui to display it compressed horizontally. The icon is now properly cropped to square (1024×1024 center crop) before resizing to 256×256. The Windows `.ico` file now includes 16/32/48/256 sizes instead of just 16×16.
+- **Fixed Chinese characters not displaying** — The previous `NotoSansSC-Regular.ttf` was a variable font (5.2MB with `fvar`/`gvar` tables) that egui's font parser couldn't handle. Replaced with a proper static TrueType font (10.5MB, 30,890 glyphs) from Google Fonts CDN. Chinese text now renders correctly in the language selector, OCR checkboxes, and throughout the UI.
+- **Fixed dark theme text invisible on first launch** — Sidebar labels (Output Dir, Threads, etc.) were nearly invisible on dark theme at startup, but fine after toggling theme. Cause: `Theme::apply()` was called before `fonts::install()`, but `ctx.set_fonts()` resets the style/visuals. Fixed by installing fonts first, then applying theme.
+- **Clarified Tesseract OCR message** — The status bar now explains that language data (tessdata) is embedded in MDrust, but the Tesseract binary must be installed separately. This is by design — embedding a C++ binary is not feasible, but the language packs (which are what users usually struggle with) are built-in.
 
 ### Downloads
 
@@ -39,4 +38,4 @@ mdrust-cli batch ./docs --threads 8 --output ./markdown
 
 ---
 
-**Full Changelog**: https://github.com/AlexZander85/MDrust/compare/v1.2.1...v1.2.2
+**Full Changelog**: https://github.com/AlexZander85/MDrust/compare/v1.2.2...v1.2.3

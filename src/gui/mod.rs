@@ -65,8 +65,11 @@ pub fn run_gui() -> eframe::Result<()> {
         "MDrust",
         options,
         Box::new(|cc| {
-            crate::gui::theme::Theme::apply(&cc.egui_ctx, true);
+            // IMPORTANT: install fonts FIRST, then apply theme.
+            // ctx.set_fonts() resets style/visuals, so if we apply theme first,
+            // the dark theme colors get wiped out on the first frame.
             crate::gui::fonts::install(&cc.egui_ctx);
+            crate::gui::theme::Theme::apply(&cc.egui_ctx, true);
             Ok(Box::new(MarkItDownApp::new()))
         }),
     );
