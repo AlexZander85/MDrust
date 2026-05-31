@@ -1,13 +1,14 @@
-## MDrust v1.2.1 — Critical Windows Crash Fix & Renderer Fallback
+## MDrust v1.2.2 — Critical Font Crash Fix
 
-This hotfix resolves a critical startup crash on Windows where the application would silently exit without showing any error message.
+This hotfix resolves a fatal startup crash caused by corrupted font files.
 
 ### Bug Fixes
 
-- **Fixed silent crash on Windows when GPU initialization fails** — Previously, if `eframe::run_native()` returned an error (e.g., wgpu/GPU failure), the error was silently lost because there was no console (`windows_subsystem = "windows"`) and `tracing::error!` had no effect without the `logs` feature. Now, all eframe errors are shown in a Windows MessageBox with troubleshooting tips.
-- **Added automatic renderer fallback (wgpu → glow)** — If the default wgpu renderer (DirectX 11/12) fails to initialize, MDrust now automatically retries with the glow renderer (OpenGL 3.0+). This covers systems with outdated GPU drivers, incompatible graphics hardware, or virtual machines without GPU passthrough.
-- **Fixed output directory name** — Changed `markitdown-output` to `mdrust-output` (leftover from rename).
-- **Improved panic messages** — Better `.expect()` messages for runtime creation failures.
+- **Fixed fatal crash: "Error parsing Inter-Bold TTF/OTF font file: InvalidFont"** — The `Inter-Regular.ttf` and `Inter-Bold.ttf` files in the `assets/fonts/` directory were accidentally HTML pages (downloaded from a wrong URL) instead of real TTF font binaries. egui's font parser would panic when trying to parse them, causing the application to crash immediately on startup.
+- **Added font validation** — Font files are now validated for TTF/OTF magic bytes before being passed to egui. If a font file is corrupted or invalid, it is silently skipped with a warning instead of causing a panic. The application will start with egui's built-in fallback fonts.
+- **Fixed output directory name** — Changed `markitdown-output` to `mdrust-output` (leftover from project rename).
+- **Added GPU error fallback** — If the wgpu renderer fails, MDrust now automatically retries with the glow (OpenGL) renderer.
+- **Added error dialog on Windows** — eframe startup errors are now shown in a Windows MessageBox instead of being silently lost.
 
 ### Downloads
 
@@ -34,11 +35,8 @@ mdrust-cli convert document.pdf
 
 # CLI: batch with 8 threads
 mdrust-cli batch ./docs --threads 8 --output ./markdown
-
-# CLI: OCR with Russian + English
-mdrust-cli convert scan.png --ocr-langs eng+rus
 ```
 
 ---
 
-**Full Changelog**: https://github.com/AlexZander85/MDrust/compare/v1.2.0...v1.2.1
+**Full Changelog**: https://github.com/AlexZander85/MDrust/compare/v1.2.1...v1.2.2
