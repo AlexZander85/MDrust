@@ -1,6 +1,6 @@
-## MDrust v1.4.0 — SIMD Acceleration & Auto-Detection
+## MDrust v1.4.0 — SIMD Acceleration, MD→HTML/DOCX Export, Tesseract FFI
 
-This release adds SIMD-accelerated parsing with automatic CPU feature detection, making MDrust even faster on modern processors.
+This release adds SIMD-accelerated parsing with automatic CPU feature detection, reverse Markdown conversion to HTML/DOCX, and native Tesseract FFI integration.
 
 ### New Features
 
@@ -9,29 +9,21 @@ This release adds SIMD-accelerated parsing with automatic CPU feature detection,
 - **SIMD word/byte counting** — `bytecount` crate accelerates character and word counting with AVX2/SSE4.1/NEON instructions.
 - **CPU feature detection** — New `src/cpu.rs` module with `CpuFeatures::detect()` using `is_x86_feature_detected!` (x86_64) and compile-time constants (aarch64). Detects: AVX-512 F/BW/VL, AVX2, AVX, SSE4.2, SSE4.1, NEON.
 - **GUI status bar — SIMD indicator** — The bottom status bar now shows the detected SIMD level (e.g., "SIMD: AVX2" in green, "SIMD: AVX-512" in green, "SIMD: SSE4.2" in yellow).
-- **CLI `cpu-info` command** — New `mdrust-cli cpu-info` command shows detailed CPU SIMD capabilities and which operations are accelerated:
-  ```
-  CPU SIMD Features
-
-  SIMD Level: AVX2
-
-  x86_64 Features:
-    SSE4.1:     Yes
-    SSE4.2:     Yes
-    AVX:        Yes
-    AVX2:       Yes
-    AVX-512 F:  No
-    AVX-512 BW: No
-    AVX-512 VL: No
-
-  SIMD-accelerated operations:
-    Hashing (blake3)    — 256-bit SIMD
-    Byte search (memchr) — 256-bit SIMD
-    Pattern match (regex) — 256-bit SIMD
-    JSON parsing (simd-json) — 256-bit SIMD
-    Word counting (bytecount) — 256-bit SIMD
-  ```
+- **CLI `cpu-info` command** — New `mdrust-cli cpu-info` command shows detailed CPU SIMD capabilities and which operations are accelerated.
+- **MD → HTML export** — Convert Markdown to standalone HTML5 with embedded CSS via `comrak`.
+- **MD → DOCX export** — Convert Markdown to Word (.docx) via `pulldown-cmark` + `docx-rs`.
+- **GUI: Output Format dropdown** — New dropdown in sidebar to select output format: Markdown, HTML, or Word.
+- **CLI: `-f`/`--format` flag** — Export to HTML or DOCX: `mdrust-cli convert doc.pdf -f html` or `-f docx`.
+- **Tesseract FFI integration** — New `tesseract-ffi` feature flag enables direct Rust FFI bindings to `libtesseract` (no CLI subprocess needed). When enabled, OCR uses native library calls for better performance and reliability. CLI subprocess is the fallback when FFI is not available.
 - **`simd` feature flag** — SIMD acceleration is enabled by default (`default = ["gui", "ocr", "preview", "simd"]`). Can be disabled with `--no-default-features` for scalar-only builds.
+- **GUI: Live progress tracking** — Conversion progress now updates in real-time. File status changes from Pending → Done/Failed in the queue. Preview shows the first converted result automatically.
+- **GUI: Accurate completion counter** — Status bar now shows actual success count (e.g., "3/5 files converted") instead of always showing "0/N".
+
+### Bug Fixes
+
+- **Fixed: "0/1 files converted"** — The GUI progress counter was never updated after conversion. Results are now streamed back via mpsc channel so the progress bar, file status, and preview all update correctly.
+- **Fixed: Preview empty after conversion** — Conversion results (markdown text) are now sent back to the GUI and displayed in the preview panel automatically.
+- **Fixed: Tesseract detection** — OCR availability check now tries both FFI (libtesseract) and CLI (tesseract binary) methods, instead of only checking CLI.
 
 ### Already SIMD-accelerated (existing, now visible)
 

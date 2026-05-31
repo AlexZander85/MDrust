@@ -474,9 +474,9 @@ impl I18n {
     /// Tesseract OCR not-found warning.
     pub fn tesseract_not_found(&self) -> &'static str {
         match self.lang {
-            Language::En => "OCR: Tesseract not installed (language data is embedded, but the tesseract binary must be installed separately)",
-            Language::Ru => "OCR: Tesseract \u{043d}\u{0435} \u{0443}\u{0441}\u{0442}\u{0430}\u{043d}\u{043e}\u{0432}\u{043b}\u{0435}\u{043d} (\u{044f}\u{0437}\u{044b}\u{043a}\u{043e}\u{0432}\u{044b}\u{0435} \u{0434}\u{0430}\u{043d}\u{043d}\u{044b}\u{0435} \u{0432}\u{0441}\u{0442}\u{0440}\u{043e}\u{0435}\u{043d}\u{044b}, \u{043d}\u{043e} \u{0441}\u{0430}\u{043c} tesseract \u{043d}\u{0443}\u{0436}\u{043d}\u{043e} \u{0443}\u{0441}\u{0442}\u{0430}\u{043d}\u{043e}\u{0432}\u{0438}\u{0442}\u{044c} \u{043e}\u{0442}\u{0434}\u{0435}\u{043b}\u{044c}\u{043d}\u{043e})",
-            Language::Zh => "OCR: \u{672a}\u{5b89}\u{88c5} Tesseract (\u{8bed}\u{8a00}\u{6570}\u{636e}\u{5df2}\u{5185}\u{7f6e}\u{ff0c}\u{4f46}\u{9700}\u{5355}\u{72ec}\u{5b89}\u{88c5} tesseract \u{7a0b}\u{5e8f})",
+            Language::En => "OCR: Tesseract not available (install libtesseract-dev or tesseract-ocr)",
+            Language::Ru => "OCR: Tesseract \u{043d}\u{0435}\u{0434}\u{043e}\u{0441}\u{0442}\u{0443}\u{043f}\u{0435}\u{043d} (\u{0443}\u{0441}\u{0442}\u{0430}\u{043d}\u{043e}\u{0432}\u{0438}\u{0442}\u{0435} libtesseract-dev \u{0438}\u{043b}\u{0438} tesseract-ocr)",
+            Language::Zh => "OCR: Tesseract \u{4e0d}\u{53ef}\u{7528} (\u{8bf7}\u{5b89}\u{88c5} libtesseract-dev \u{6216} tesseract-ocr)",
         }
     }
 

@@ -1,24 +1,25 @@
-//! OCR module using Tesseract CLI
+//! OCR module using Tesseract — Rust FFI bindings with CLI fallback
 //!
 //! This module provides OCR (Optical Character Recognition) functionality by:
-//! - Embedding tessdata_fast language files (eng, rus, chi_sim) at compile time
-//! - Extracting them on first run to the application data directory
-//! - Calling the Tesseract CLI as a subprocess for text recognition
+//! - **Primary**: Using the `tesseract` Rust crate (FFI bindings to libtesseract)
+//!   This links directly to the Tesseract C library at compile time — no CLI subprocess needed.
+//! - **Fallback**: If FFI is unavailable at runtime, falls back to calling `tesseract` CLI
+//! - **Embedded tessdata**: Language files (eng, rus, chi_sim) are embedded at compile time
+//!   via `include_bytes!` and extracted on first run
 //!
 //! # Prerequisites
-//! The `tesseract` command-line tool must be installed on the system.
+//! The `libtesseract` shared library must be available on the system.
 //!
 //! ## Installation
-//! - **Linux (Debian/Ubuntu)**: `sudo apt install tesseract-ocr`
-//! - **Linux (Fedora)**: `sudo dnf install tesseract`
-//! - **Linux (Arch)**: `sudo pacman -S tesseract`
-//! - **macOS**: `brew install tesseract`
+//! - **Linux (Debian/Ubuntu)**: `sudo apt install libtesseract-dev libleptonica-dev`
+//! - **Linux (Fedora)**: `sudo dnf install tesseract-devel leptonica-devel`
+//! - **Linux (Arch)**: `sudo pacman -S tesseract leptonica`
+//! - **macOS**: `brew install tesseract leptonica`
 //! - **Windows**: Download from <https://github.com/UB-Mannheim/tesseract/wiki> or `choco install tesseract`
 
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 // ---------------------------------------------------------------------------
 // Embedded tessdata files (tessdata_fast)
@@ -128,9 +129,53 @@ pub fn ensure_tessdata(languages: &[OcrLanguage]) -> Result<()> {
     Ok(())
 }
 
-/// Check whether the `tesseract` CLI is available on the system `PATH`.
+/// Check whether Tesseract is available — either via FFI (libtesseract) or CLI.
+///
+/// Tries the FFI approach first (direct library call), then falls back to
+/// checking for the `tesseract` CLI binary on PATH.
 pub fn is_tesseract_available() -> bool {
-    Command::new("tesseract")
+    // Try FFI first — if the tesseract crate is compiled with libtesseract,
+    // this should work. We do a simple API test.
+    if is_tesseract_ffi_available() {
+        return true;
+    }
+
+    // Fallback: check CLI
+    is_tesseract_cli_available()
+}
+
+/// Check if Tesseract FFI (libtesseract) is available at runtime.
+fn is_tesseract_ffi_available() -> bool {
+    // The tesseract Rust crate links to libtesseract at compile time.
+    // If the shared library is available at runtime, we can use it.
+    // We test by trying to create a minimal API instance.
+    //
+    // Since we can't easily test without a tessdata path, we check if
+    // the library can be loaded by attempting a simple init.
+    #[cfg(feature = "tesseract-ffi")]
+    {
+        // Try to initialize tesseract with a minimal setup.
+        // If this succeeds, libtesseract is available at runtime.
+        let tessdata_dir = crate::utils::tessdata_dir();
+        let tessdata_parent = tessdata_dir
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        if let Ok(mut api) = tesseract::Tesseract::new(Some(&tessdata_parent), Some("eng")) {
+            // Successfully created API — libtesseract is available
+            drop(api);
+            return true;
+        }
+    }
+
+    #[allow(unreachable_code)]
+    false
+}
+
+/// Check if the `tesseract` CLI is available on the system `PATH`.
+fn is_tesseract_cli_available() -> bool {
+    std::process::Command::new("tesseract")
         .arg("--version")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -149,24 +194,11 @@ pub fn is_tesseract_available() -> bool {
 ///
 /// # Errors
 /// Returns an error if:
-/// - Tesseract is not installed on the system.
+/// - Tesseract is not available (neither FFI nor CLI).
 /// - The image file does not exist.
 /// - Tesseract exits with a non-zero status.
 pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Result<String> {
     // --- Validate prerequisites ------------------------------------------------
-
-    if !is_tesseract_available() {
-        bail!(
-            "Tesseract OCR is not installed or not found on PATH.\n\n\
-             Please install Tesseract:\n\n\
-             \x20  Linux (Debian/Ubuntu):  sudo apt install tesseract-ocr\n\
-             \x20  Linux (Fedora):         sudo dnf install tesseract\n\
-             \x20  Linux (Arch):           sudo pacman -S tesseract\n\
-             \x20  macOS:                  brew install tesseract\n\
-             \x20  Windows:                choco install tesseract\n\
-             \x20                          or download from https://github.com/UB-Mannheim/tesseract/wiki\n"
-        );
-    }
 
     if languages.is_empty() {
         bail!("At least one OCR language must be specified");
@@ -183,7 +215,39 @@ pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Re
 
     ensure_tessdata(languages)?;
 
-    // --- Build the language string (+lang1+lang2) ------------------------------
+    // --- Try FFI first, then CLI fallback --------------------------------------
+
+    // Try FFI approach
+    if let Ok(text) = ocr_via_ffi(image_path, languages) {
+        return Ok(text);
+    }
+
+    // Fallback to CLI
+    if let Ok(text) = ocr_via_cli(image_path, languages) {
+        return Ok(text);
+    }
+
+    bail!(
+        "Tesseract OCR is not available.\n\n\
+         Please install Tesseract:\n\n\
+         \x20  Linux (Debian/Ubuntu):  sudo apt install libtesseract-dev libleptonica-dev\n\
+         \x20  Linux (Fedora):         sudo dnf install tesseract-devel leptonica-devel\n\
+         \x20  Linux (Arch):           sudo pacman -S tesseract leptonica\n\
+         \x20  macOS:                  brew install tesseract leptonica\n\
+         \x20  Windows:                choco install tesseract\n\
+         \x20                          or download from https://github.com/UB-Mannheim/tesseract/wiki\n"
+    );
+}
+
+/// OCR via Tesseract Rust FFI bindings (links to libtesseract directly)
+#[cfg(feature = "tesseract-ffi")]
+fn ocr_via_ffi(image_path: &Path, languages: &[OcrLanguage]) -> Result<String> {
+    let tessdata_dir = crate::utils::tessdata_dir();
+    let tessdata_parent = tessdata_dir
+        .parent()
+        .context("tessdata directory has no parent")?
+        .to_string_lossy()
+        .to_string();
 
     let lang_str: String = languages
         .iter()
@@ -191,16 +255,47 @@ pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Re
         .collect::<Vec<_>>()
         .join("+");
 
-    // Point tesseract to our custom tessdata directory by setting TESSDATA_PREFIX
-    // to the *parent* of the tessdata/ directory (tesseract appends "tessdata/" itself).
+    let mut api = tesseract::Tesseract::new(Some(&tessdata_parent), Some(&lang_str))
+        .map_err(|e| anyhow::anyhow!("Tesseract FFI init failed: {}", e))?;
+
+    let image_path_str = image_path.to_string_lossy().to_string();
+    api = api.set_image(&image_path_str)
+        .map_err(|e| anyhow::anyhow!("Tesseract set_image failed: {}", e))?;
+
+    let text = api.get_text()
+        .map_err(|e| anyhow::anyhow!("Tesseract get_text failed: {}", e))?;
+
+    if text.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    Ok(postprocess_to_markdown(&text))
+}
+
+/// OCR via Tesseract Rust FFI bindings — stub when tesseract-ffi feature is disabled
+#[cfg(not(feature = "tesseract-ffi"))]
+fn ocr_via_ffi(_image_path: &Path, _languages: &[OcrLanguage]) -> Result<String> {
+    Err(anyhow::anyhow!("Tesseract FFI not available (tesseract-ffi feature disabled)"))
+}
+
+/// OCR via Tesseract CLI subprocess (fallback method)
+fn ocr_via_cli(image_path: &Path, languages: &[OcrLanguage]) -> Result<String> {
+    if !is_tesseract_cli_available() {
+        return Err(anyhow::anyhow!("Tesseract CLI not found on PATH"));
+    }
+
+    let lang_str: String = languages
+        .iter()
+        .map(|l| l.tesseract_code())
+        .collect::<Vec<_>>()
+        .join("+");
+
     let tessdata_parent = crate::utils::tessdata_dir()
         .parent()
         .context("tessdata directory has no parent")?
         .to_path_buf();
 
-    // --- Run tesseract ---------------------------------------------------------
-
-    let output = Command::new("tesseract")
+    let output = std::process::Command::new("tesseract")
         .arg(image_path)
         .arg("stdout")
         .arg("-l")
@@ -219,7 +314,7 @@ pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Re
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "Tesseract failed with exit code {:?}:\n{}",
+            "Tesseract CLI failed with exit code {:?}:\n{}",
             output.status.code(),
             stderr.trim()
         );
@@ -231,10 +326,7 @@ pub fn ocr_image_to_markdown(image_path: &Path, languages: &[OcrLanguage]) -> Re
         return Ok(String::new());
     }
 
-    // --- Post-process into lightweight Markdown --------------------------------
-
-    let markdown = postprocess_to_markdown(&text);
-    Ok(markdown)
+    Ok(postprocess_to_markdown(&text))
 }
 
 // ---------------------------------------------------------------------------

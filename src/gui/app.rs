@@ -68,10 +68,10 @@ pub struct MarkItDownApp {
     selected_preview: usize,
     /// Tokio runtime for async operations
     runtime: Arc<Runtime>,
-    /// mpsc channel receiver for batch results (includes auto-save)
-    result_rx: std::sync::mpsc::Receiver<Result<(), String>>,
-    /// mpsc channel sender for batch results
-    result_tx: std::sync::mpsc::Sender<Result<(), String>>,
+    /// mpsc channel receiver for individual conversion results
+    result_rx: std::sync::mpsc::Receiver<ConvertMessage>,
+    /// mpsc channel sender for individual conversion results
+    result_tx: std::sync::mpsc::Sender<ConvertMessage>,
     /// Output format
     output_format: OutputFormat,
     /// Internationalization
@@ -100,6 +100,24 @@ pub struct MarkItDownApp {
     app_icon: Option<egui::TextureHandle>,
     /// CommonMark cache for rendered preview
     md_cache: egui_commonmark::CommonMarkCache,
+}
+
+/// Messages sent from the conversion worker thread to the GUI
+enum ConvertMessage {
+    /// A single file was converted successfully
+    FileDone {
+        path: PathBuf,
+        markdown: String,
+    },
+    /// A single file failed
+    FileFailed {
+        path: PathBuf,
+        error: String,
+    },
+    /// All files have been processed (batch complete)
+    BatchComplete,
+    /// The entire batch failed with a fatal error
+    BatchError(String),
 }
 
 impl MarkItDownApp {
@@ -172,17 +190,62 @@ impl MarkItDownApp {
         langs
     }
 
-    /// Pump mpsc channels for results — no blocking I/O on UI thread
+    /// Pump mpsc channels for results — no blocking I/O on UI thread.
+    /// Processes all pending messages (not just one) so the progress bar
+    /// and preview update smoothly.
     fn pump_channels(&mut self) {
-        if let Ok(result) = self.result_rx.try_recv() {
-            match result {
-                Ok(()) => {
-                    self.state = AppState::Completed;
-                    self.notification = Some((self.i18n.completed().to_string(), std::time::Instant::now()));
+        while let Ok(msg) = self.result_rx.try_recv() {
+            match msg {
+                ConvertMessage::FileDone { path, markdown } => {
+                    self.progress_done += 1;
+                    // Store the result for preview
+                    self.last_results.push((path.clone(), markdown));
+                    // Auto-select the first result for preview
+                    if self.last_results.len() == 1 {
+                        self.selected_preview = 0;
+                        self.last_selected_preview = 0;
+                        if let Some((_, md)) = self.last_results.first() {
+                            self.preview_text = md.clone();
+                        }
+                    }
+                    // Update file status in queue
+                    if let Some(file) = self.files.iter_mut().find(|f| f.path == path) {
+                        file.status = FileStatus::Completed;
+                    }
                 }
-                Err(e) => {
+                ConvertMessage::FileFailed { path, error } => {
+                    self.progress_done += 1;
+                    tracing::warn!("Failed to convert {}: {}", path.display(), error);
+                    // Update file status in queue
+                    if let Some(file) = self.files.iter_mut().find(|f| f.path == path) {
+                        file.status = FileStatus::Failed(error);
+                    }
+                }
+                ConvertMessage::BatchComplete => {
+                    let success_count = self.last_results.len();
+                    let total = self.progress_total;
+                    if success_count > 0 {
+                        self.state = AppState::Completed;
+                        self.notification = Some((
+                            format!("{}: {}/{}", self.i18n.completed(), success_count, total),
+                            std::time::Instant::now(),
+                        ));
+                    } else {
+                        self.state = AppState::Error(
+                            self.i18n.error().to_string(),
+                        );
+                        self.notification = Some((
+                            format!("{}: 0/{}", self.i18n.error(), total),
+                            std::time::Instant::now(),
+                        ));
+                    }
+                }
+                ConvertMessage::BatchError(e) => {
                     self.state = AppState::Error(e.clone());
-                    self.notification = Some((format!("{}: {}", self.i18n.error(), e), std::time::Instant::now()));
+                    self.notification = Some((
+                        format!("{}: {}", self.i18n.error(), e),
+                        std::time::Instant::now(),
+                    ));
                 }
             }
         }
@@ -232,7 +295,7 @@ impl MarkItDownApp {
         }
     }
 
-    /// Start the conversion — save is done in the worker thread, not on UI thread
+    /// Start the conversion — results are streamed back via mpsc channel
     fn start_conversion(&mut self) {
         if self.files.is_empty() {
             return;
@@ -242,6 +305,9 @@ impl MarkItDownApp {
         self.progress_done = 0;
         self.progress_total = self.files.len();
         self.convert_start = Some(std::time::Instant::now());
+        self.last_results.clear();
+        self.selected_preview = 0;
+        self.last_selected_preview = 0;
 
         let paths: Vec<PathBuf> = self.files.iter().map(|f| f.path.clone()).collect();
         let output_format = self.output_format.clone();
@@ -270,15 +336,34 @@ impl MarkItDownApp {
 
                 let batch_result = processor.execute().await?;
 
+                // Stream individual results back to GUI
+                for (path, conversion) in &batch_result.successes {
+                    let markdown = conversion.full_markdown();
+                    let _ = tx.send(ConvertMessage::FileDone {
+                        path: path.clone(),
+                        markdown,
+                    });
+                }
+                for (path, error) in &batch_result.failures {
+                    let _ = tx.send(ConvertMessage::FileFailed {
+                        path: path.clone(),
+                        error: error.clone(),
+                    });
+                }
+
                 // Auto-save on the worker thread — does NOT block UI
-                if !output_dir.as_os_str().is_empty() {
+                if !output_dir.as_os_str().is_empty() && !batch_result.successes.is_empty() {
                     let _ = batch_result.save_all(&output_dir, save_combined).await;
                 }
+
+                let _ = tx.send(ConvertMessage::BatchComplete);
 
                 Ok::<(), anyhow::Error>(())
             });
 
-            let _ = tx.send(result.map_err(|e| e.to_string()));
+            if let Err(e) = result {
+                let _ = tx.send(ConvertMessage::BatchError(e.to_string()));
+            }
         });
     }
 
@@ -368,12 +453,13 @@ impl MarkItDownApp {
                     }
                 }
                 AppState::Completed => {
+                    let success_count = self.last_results.len();
                     ui.label(egui::RichText::new(format!(
                         "{} \u{2014} {}/{} {}",
                         self.i18n.completed(),
-                        self.progress_done, self.progress_total,
+                        success_count, self.progress_total,
                         self.i18n.files_converted()
-                    )).small().color(Theme::SUCCESS));
+                    )).small().color(if success_count > 0 { Theme::SUCCESS } else { Theme::WARNING }));
                 }
                 AppState::Error(e) => {
                     ui.label(egui::RichText::new(format!("{}: {}", self.i18n.error(), e))
@@ -403,7 +489,7 @@ impl MarkItDownApp {
                     ui.label(egui::RichText::new("OCR: Tesseract OK")
                         .small().color(Theme::SUCCESS));
                 } else {
-                    ui.label(egui::RichText::new(self.i18n.tesseract_not_found())
+                    ui.label(egui::RichText::new("OCR: unavailable")
                         .small().color(Theme::WARNING));
                 }
 

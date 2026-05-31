@@ -17,19 +17,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Full edition (GUI + OCR + Preview) ──
+          # ── Full edition (GUI + OCR + Preview + Tesseract FFI) ──
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             edition: full
-            features: ""
+            features: "--features tesseract-ffi"
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             edition: full
-            features: ""
+            features: "--features tesseract-ffi"
           - os: macos-latest
             target: x86_64-apple-darwin
             edition: full
-            features: ""
+            features: "--features tesseract-ffi"
           # ── Light edition (GUI, no OCR, no Preview, with SIMD) ──
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -43,19 +43,19 @@ jobs:
             target: x86_64-apple-darwin
             edition: light
             features: "--no-default-features --features gui,simd"
-          # ── CLI-only edition (no GUI, with OCR + SIMD) ──
+          # ── CLI-only edition (no GUI, with OCR FFI + SIMD) ──
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             edition: cli-only
-            features: "--no-default-features --features cli-only,ocr,simd"
+            features: "--no-default-features --features cli-only,ocr,simd,tesseract-ffi"
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             edition: cli-only
-            features: "--no-default-features --features cli-only,ocr,simd"
+            features: "--no-default-features --features cli-only,ocr,simd,tesseract-ffi"
           - os: macos-latest
             target: x86_64-apple-darwin
             edition: cli-only
-            features: "--no-default-features --features cli-only,ocr,simd"
+            features: "--no-default-features --features cli-only,ocr,simd,tesseract-ffi"
 
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +73,7 @@ jobs:
 
       - name: Install macOS dependencies
         if: matrix.os == 'macos-latest'
-        run: brew install tesseract leptonica
+        run: brew install tesseract leptonica pkg-config
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
